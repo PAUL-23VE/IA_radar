@@ -40,7 +40,7 @@ OBJETIVO    = {6, 7}                # longitud de placa sin guión
 #  CONFIGURACIÓN
 # ----------------------------------------------------------------
 RUTA_YOLO  = os.getenv("YOLO_MODEL_PATH", "best.pt")
-CONF_PLACA = 0.35
+CONF_PLACA = 0.15
 
 _yolo_cache   = None
 _cnn_cache    = None
@@ -464,6 +464,15 @@ def get_easyocr_placa(recorte: np.ndarray) -> str:
     if _easyocr_reader is None:
         import easyocr
         _easyocr_reader = easyocr.Reader(["es"], gpu=True, verbose=False)
+        
+    # Escalar agresivamente para ayudar al LSTM
+    h, w = recorte.shape[:2]
+    if h < 80 or w < 200:
+        escala = max(80 / h, 200 / w)
+        nuevo_w = int(w * escala)
+        nuevo_h = int(h * escala)
+        recorte = cv2.resize(recorte, (nuevo_w, nuevo_h), interpolation=cv2.INTER_CUBIC)
+        
     import unicodedata
     res = _easyocr_reader.readtext(
         recorte,
