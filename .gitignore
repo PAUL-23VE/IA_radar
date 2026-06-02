@@ -22,3 +22,7 @@ yolov8n.pt
 yolo11n.pt
 
 # Nota: best.pt (detector YOLOv11) SÍ se versiona — es el modelo del proyecto.
+
+# Recortes de caracteres generados localmente
+dataset_propio/
+
