@@ -437,21 +437,45 @@ def predecir_caracteres(imagenes: list[np.ndarray]) -> tuple[str, float]:
 # ----------------------------------------------------------------
 def validar_y_corregir_placa(placa_cruda: str) -> str:
     """
-    Intenta armar una placa válida (ABC-NNNN) a partir de la cadena cruda.
-    Prueba todas las ventanas de 6 y 7 caracteres.
+    Intenta armar una placa válida a partir de la cadena cruda.
+    Acepta placas parciales si falta 1 o 2 dígitos por borrosidad.
     """
     if len(placa_cruda) < 5 or len(placa_cruda) > 9:
         return ""
 
-    for largo in (7, 6):
-        # Deslizar una ventana de 'largo' caracteres por la cadena
+    # Probar ventanas de tamaño 7, 6 y 5
+    for largo in (7, 6, 5):
         for inicio in range(len(placa_cruda) - largo + 1):
             candidato = placa_cruda[inicio: inicio + largo]
             letras  = candidato[:3]
             numeros = candidato[3:]
             placa   = f"{letras}-{numeros}"
-            if re.match(r"^[A-Z]{3}-\d{3,4}$", placa):
+            # Permitir 3 letras y entre 2 y 4 números
+            if re.match(r"^[A-Z]{3}-\d{2,4}$", placa):
                 return placa
+    return ""
+
+
+_easyocr_reader = None
+
+def get_easyocr_placa(recorte: np.ndarray) -> str:
+    """Fallback: usa EasyOCR solo si el segmentador falla por borrosidad extrema."""
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        import easyocr
+        _easyocr_reader = easyocr.Reader(["es"], gpu=True, verbose=False)
+    import unicodedata
+    res = _easyocr_reader.readtext(
+        recorte,
+        allowlist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.",
+        paragraph=False
+    )
+    texto = " ".join(t for _, t, _ in res)
+    texto = unicodedata.normalize("NFD", texto.upper())
+    texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+    m = re.search(r"([A-Z]{3})[\s\-.]?(\d{3,4})", texto)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
     return ""
 
 
@@ -464,6 +488,15 @@ def leer_placa_desde_recorte(
     chars       = segmentar_caracteres(recorte)
     texto, conf = predecir_caracteres(chars)
     placa       = validar_y_corregir_placa(texto)
+    
+    # Fallback LSTM (EasyOCR) para placas fuertemente borrosas/fusionadas
+    if not placa:
+        placa_ocr = get_easyocr_placa(recorte)
+        if placa_ocr:
+            placa = placa_ocr
+            texto = placa_ocr.replace("-", "")
+            conf = 0.50
+            
     return placa, texto, conf
 
 
@@ -473,6 +506,7 @@ def reconocer_placa(
     recorte, bbox = detectar_region_placa(frame)
     if recorte is None:
         return "", None
+    
     placa, _texto, _conf = leer_placa_desde_recorte(recorte)
     return placa, bbox
 
