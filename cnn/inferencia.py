@@ -83,29 +83,41 @@ def cargar_cnn():
 #  1. DETECCIÓN DE PLACA (YOLOv11)
 # ----------------------------------------------------------------
 def detectar_region_placa(frame: np.ndarray) -> tuple[np.ndarray | None, tuple | None]:
-    if frame is None or frame.size == 0:
+    yolo        = cargar_yolo()
+    dispositivo = resolver_dispositivo()
+    
+    usar_half = ("cuda" in dispositivo)
+    res = yolo(frame, conf=CONF_PLACA, verbose=False, half=usar_half)[0]
+
+    if not res.boxes:
         return None, None
 
-    modelo    = cargar_yolo()
-    device    = resolver_dispositivo()
-    resultados = modelo(frame, conf=CONF_PLACA, verbose=False, device=device)
-    cajas     = resultados[0].boxes
+    mejor_box  = None
+    mejor_conf = -1.0
+    for box in res.boxes:
+        conf = float(box.conf[0])
+        if conf > mejor_conf:
+            mejor_conf = conf
+            mejor_box  = box.xywh[0]
 
-    if cajas is None or len(cajas) == 0:
-        return None, None
-
-    mejor = int(cajas.conf.argmax())
-    x1, y1, x2, y2 = cajas.xyxy[mejor].cpu().numpy().astype(int)
-
-    h_f, w_f = frame.shape[:2]
-    x1, y1 = max(0, x1), max(0, y1)
-    x2, y2 = min(w_f, x2), min(h_f, y2)
-    if x2 <= x1 or y2 <= y1:
-        return None, None
-
-    recorte = frame[y1:y2, x1:x2]
-    bbox    = (x1, y1, x2 - x1, y2 - y1)
-    return recorte, bbox
+    if mejor_box is not None:
+        x_c, y_c, w, h = map(int, mejor_box)
+        x = x_c - w // 2
+        y = y_c - h // 2
+        
+        # Pequeño padding (3%) para no cortar los bordes de letras exteriores
+        px = max(1, int(w * 0.03))
+        py = max(1, int(h * 0.03))
+        
+        y1 = max(0, y - py)
+        y2 = min(frame.shape[0], y + h + py)
+        x1 = max(0, x - px)
+        x2 = min(frame.shape[1], x + w + px)
+        
+        recorte = frame[y1:y2, x1:x2]
+        return recorte, (x1, y1, x2 - x1, y2 - y1)
+        
+    return None, None
 
 
 # ================================================================
