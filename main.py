@@ -165,14 +165,26 @@ def procesar_vehiculo(cam_url: str = URL_STREAM, distancia_m: float = DISTANCIA_
                             (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
                 cv2.putText(frame_display, "ESTADO: BUSCANDO PLACA...", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
                 
-                placa, bbox = reconocer_placa(frame)
-                if placa:
+                placa, bbox, conf = reconocer_placa(frame)
+                if placa and conf >= 0.50:
                     x, y, w, h = bbox
                     cv2.rectangle(frame_display, (x, y), (x+w, y+h), (0, 255, 0), 2)
                     placa_detectada = placa
                     estado = ESTADO_BD
-                    print(f"[Placa] Reconocida: {placa}")
+                    print(f"[Placa] Reconocida: {placa} (Conf: {conf:.2f})")
                     print(f"[Sistema] Consultando Base de Datos...")
+                elif placa:
+                    print(f"[Placa] Descartada por baja confianza: {placa} (Conf: {conf:.2f})")
+                
+                # Timeout para evitar que el sistema se quede congelado si nunca detecta la placa
+                if time.time() - t_b > 5.0:
+                    print("[Sistema] Tiempo agotado buscando placa. Reiniciando radar...")
+                    estado = ESTADO_VELOCIDAD
+                    cruzó_linea_a = False
+                    cruzó_linea_b = False
+                    t_a = 0.0
+                    t_b = 0.0
+
 
             # ─── MÓDULO DB Y HUD FINAL ───────────────────────────
             elif estado == ESTADO_BD:

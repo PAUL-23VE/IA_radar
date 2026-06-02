@@ -45,6 +45,6 @@ Un aporte algorítmico clave fue la "restricción por logits". Sabemos que las p
 ---
 
 ## 4. Validación y Red de Seguridad
-Finalmente, el sistema valida la cadena de texto contra la expresión regular `^[A-Z]{3}-\d{2,4}$`. 
+Finalmente, el sistema valida la cadena de texto contra la expresión regular `^[A-Z]{3}-\d{3,4}$`, y adicionalmente filtra las lecturas que posean una confianza estadística de la CNN menor al 50%. Esto garantiza descartar lecturas "fantasma" o falsos positivos. 
 
 **Fallback:** Para el ~15% de los casos en que la placa está cubierta de barro o extremadamente borrosa (impidiendo la separación física por OpenCV), el sistema invoca una red neuronal recurrente LSTM de rescate (EasyOCR) como plan B, asegurando robustez en condiciones extremas y permitiendo al sistema cruzar la meta del 86.7% de precisión final.

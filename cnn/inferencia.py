@@ -450,20 +450,20 @@ def predecir_caracteres(imagenes: list[np.ndarray]) -> tuple[str, float]:
 def validar_y_corregir_placa(placa_cruda: str) -> str:
     """
     Intenta armar una placa válida a partir de la cadena cruda.
-    Acepta placas parciales muy extremas (hasta 1 dígito) para maximizar recall en placas borrosas.
+    Filtra estrictamente para el formato Ecuatoriano: 3 letras y 3-4 números.
     """
-    if len(placa_cruda) < 4 or len(placa_cruda) > 9:
+    if len(placa_cruda) < 6 or len(placa_cruda) > 9:
         return ""
 
-    # Probar ventanas de tamaño 7, 6, 5 y 4
-    for largo in (7, 6, 5, 4):
+    # Probar ventanas de tamaño 7 y 6 (las placas ecuatorianas tienen 6 o 7 caracteres)
+    for largo in (7, 6):
         for inicio in range(len(placa_cruda) - largo + 1):
             candidato = placa_cruda[inicio: inicio + largo]
             letras  = candidato[:3]
             numeros = candidato[3:]
             placa   = f"{letras}-{numeros}"
-            # Permitir 2 o 3 letras y entre 1 y 4 números
-            if re.match(r"^[A-Z]{2,3}-\d{1,4}$", placa):
+            # Formato estricto: 3 letras obligatorias, 3 o 4 números obligatorios
+            if re.match(r"^[A-Z]{3}-\d{3,4}$", placa):
                 return placa
     return ""
 
@@ -523,13 +523,13 @@ def leer_placa_desde_recorte(
 
 def reconocer_placa(
     frame: np.ndarray, max_variantes: int | None = None
-) -> tuple[str, tuple | None]:
+) -> tuple[str, tuple | None, float]:
     recorte, bbox = detectar_region_placa(frame)
     if recorte is None:
-        return "", None
+        return "", None, 0.0
     
     placa, _texto, _conf = leer_placa_desde_recorte(recorte)
-    return placa, bbox
+    return placa, bbox, _conf
 
 
 # ----------------------------------------------------------------
@@ -541,8 +541,8 @@ if __name__ == "__main__":
     if frame is None:
         print(f"No se pudo cargar: {ruta}")
     else:
-        placa, bbox = reconocer_placa(frame)
-        print(f"Placa: {placa!r}")
+        placa, bbox, conf = reconocer_placa(frame)
+        print(f"Placa: {placa!r} (Confianza: {conf:.2f})")
         if bbox:
             x, y, w, h = bbox
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
