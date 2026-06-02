@@ -270,6 +270,7 @@ def _cajas_a_imagenes(cajas: list, binaria: np.ndarray) -> list[np.ndarray]:
 def segmentar_caracteres(recorte: np.ndarray) -> list[np.ndarray]:
     """
     Motor de segmentación multi-estrategia:
+      - Escala recortes pequeños a mínimo 120px de ancho
       - Grid de 5 zonas × 5 modos × 2 inversiones = 50 combinaciones
       - Split automático de boxes anchos (letras pegadas)
       - Proyección vertical como fallback
@@ -278,12 +279,23 @@ def segmentar_caracteres(recorte: np.ndarray) -> list[np.ndarray]:
     if recorte is None or recorte.size == 0:
         return []
 
+    # ── Escalar si el recorte es demasiado pequeño ──────────────
+    # Letras de < 10 px de alto son imposibles de segmentar.
+    # Escalamos hasta que el alto sea al menos 50 px.
     h_r, w_r = recorte.shape[:2]
+    ALTO_MIN = 50
+    ANCHO_MIN = 120
+    if h_r < ALTO_MIN or w_r < ANCHO_MIN:
+        escala = max(ALTO_MIN / h_r, ANCHO_MIN / w_r)
+        nuevo_w = int(w_r * escala)
+        nuevo_h = int(h_r * escala)
+        recorte = cv2.resize(recorte, (nuevo_w, nuevo_h), interpolation=cv2.INTER_CUBIC)
+        h_r, w_r = recorte.shape[:2]
 
-    mejor_cajas   = []
-    mejor_bin     = None
+    mejor_cajas    = []
+    mejor_bin      = None
     mejor_zona_pct = 0.18
-    mejor_dist    = float("inf")
+    mejor_dist     = float("inf")
 
     ZONAS  = [0.18, 0.10, 0.25, 0.00, 0.30]
     MODOS  = ["adaptativa", "adaptativa_suave", "otsu", "otsu_normal", "umbral_fijo"]
