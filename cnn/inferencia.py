@@ -450,20 +450,20 @@ def predecir_caracteres(imagenes: list[np.ndarray]) -> tuple[str, float]:
 def validar_y_corregir_placa(placa_cruda: str) -> str:
     """
     Intenta armar una placa válida a partir de la cadena cruda.
-    Acepta placas parciales si falta 1 o 2 dígitos por borrosidad.
+    Acepta placas parciales muy extremas (hasta 1 dígito) para maximizar recall en placas borrosas.
     """
-    if len(placa_cruda) < 5 or len(placa_cruda) > 9:
+    if len(placa_cruda) < 4 or len(placa_cruda) > 9:
         return ""
 
-    # Probar ventanas de tamaño 7, 6 y 5
-    for largo in (7, 6, 5):
+    # Probar ventanas de tamaño 7, 6, 5 y 4
+    for largo in (7, 6, 5, 4):
         for inicio in range(len(placa_cruda) - largo + 1):
             candidato = placa_cruda[inicio: inicio + largo]
             letras  = candidato[:3]
             numeros = candidato[3:]
             placa   = f"{letras}-{numeros}"
-            # Permitir 3 letras y entre 2 y 4 números
-            if re.match(r"^[A-Z]{3}-\d{2,4}$", placa):
+            # Permitir 2 o 3 letras y entre 1 y 4 números
+            if re.match(r"^[A-Z]{2,3}-\d{1,4}$", placa):
                 return placa
     return ""
 
