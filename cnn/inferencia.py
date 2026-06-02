@@ -1,54 +1,54 @@
 """
 cnn/inferencia.py
-Reconocimiento de placas basado en YOLOv11 + CNN Propia (PyTorch).
+Pipeline completo de reconocimiento de placas: YOLOv11 + CNN Propia (PyTorch).
 
 Pipeline:
-  1. YOLOv11 (best.pt) detecta la región de la placa en el frame
-  2. Segmentador multi-estrategia:
-       - Grid de zona×binarización×inversión (30 combinaciones)
-       - Split automático de boxes muy anchos (letras fusionadas)
-       - Proyección vertical como fallback matemático
-  3. Predicción posicional: posiciones 0-2 → solo letras (A-Z),
-     posiciones 3-6 → solo dígitos (0-9), usando logits directos
-  4. Validación tolerante: acepta 5-8 chars y busca la mejor ventana
+  1. YOLOv11 (best.pt) detecta la región de la placa
+  2. Preprocesamiento: sharpening + CLAHE para imágenes de cámara móvil
+  3. Segmentador multi-estrategia con bounds superior E INFERIOR
+     (evita incluir texto "ECUADOR" y pie de placa)
+  4. Predicción posicional: pos 0-2 → letras, pos 3-6 → dígitos
+  5. Fallback EasyOCR si CNN falla o confianza < umbral
 """
 
 import os
 import re
+import threading
+
 import cv2
 import numpy as np
-from ultralytics import YOLO
 import torch
 import torch.nn.functional as F
+from ultralytics import YOLO
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-radar")
 
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
-from modelo import crear_modelo_cnn, CLASES, NUM_CLASES
+from modelo import CLASES, NUM_CLASES, crear_modelo_cnn
 
 # ----------------------------------------------------------------
-#  ÍNDICES DE CLASES
-#  CLASES = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-#  Letras: índices 0-25 | Dígitos: índices 26-35
+#  Índices de clases
 # ----------------------------------------------------------------
 IDX_LETRAS  = list(range(26))       # A..Z
 IDX_DIGITOS = list(range(26, 36))   # 0..9
 OBJETIVO    = {6, 7}                # longitud de placa sin guión
 
 # ----------------------------------------------------------------
-#  CONFIGURACIÓN
+#  Configuración
 # ----------------------------------------------------------------
 RUTA_YOLO  = os.getenv("YOLO_MODEL_PATH", "best.pt")
 CONF_PLACA = 0.15
 
+# Singletons — carga diferida y thread-safe
+_lock         = threading.Lock()
 _yolo_cache   = None
 _cnn_cache    = None
 _device_cache = None
 
 
 # ----------------------------------------------------------------
-#  CARGA DE MODELOS (singleton)
+#  Carga de modelos (singleton thread-safe)
 # ----------------------------------------------------------------
 def resolver_dispositivo() -> str:
     global _device_cache
@@ -57,36 +57,41 @@ def resolver_dispositivo() -> str:
     return _device_cache
 
 
-def cargar_yolo():
+def cargar_yolo() -> YOLO:
     global _yolo_cache
     if _yolo_cache is None:
-        _yolo_cache = YOLO(RUTA_YOLO)
+        with _lock:
+            if _yolo_cache is None:
+                _yolo_cache = YOLO(RUTA_YOLO)
     return _yolo_cache
 
 
 def cargar_cnn():
     global _cnn_cache
     if _cnn_cache is None:
-        dispositivo = resolver_dispositivo()
-        _cnn_cache = crear_modelo_cnn().to(dispositivo)
-        ruta_pt = os.path.join(
-            os.path.dirname(__file__), "..", "models", "modelo_entrenado.pt"
-        )
-        _cnn_cache.load_state_dict(
-            torch.load(ruta_pt, map_location=dispositivo, weights_only=True)
-        )
-        _cnn_cache.eval()
+        with _lock:
+            if _cnn_cache is None:
+                dispositivo = resolver_dispositivo()
+                m = crear_modelo_cnn().to(dispositivo)
+                ruta_pt = os.path.join(
+                    os.path.dirname(__file__), "..", "models", "modelo_entrenado.pt"
+                )
+                m.load_state_dict(
+                    torch.load(ruta_pt, map_location=dispositivo, weights_only=True)
+                )
+                m.eval()
+                _cnn_cache = m
     return _cnn_cache
 
 
 # ----------------------------------------------------------------
-#  1. DETECCIÓN DE PLACA (YOLOv11)
+#  1. Detección de placa (YOLOv11)
 # ----------------------------------------------------------------
 def detectar_region_placa(frame: np.ndarray) -> tuple[np.ndarray | None, tuple | None]:
     yolo        = cargar_yolo()
     dispositivo = resolver_dispositivo()
-    
-    usar_half = ("cuda" in dispositivo)
+
+    usar_half = "cuda" in dispositivo
     res = yolo(frame, conf=CONF_PLACA, verbose=False, half=usar_half)[0]
 
     if not res.boxes:
@@ -100,43 +105,73 @@ def detectar_region_placa(frame: np.ndarray) -> tuple[np.ndarray | None, tuple |
             mejor_conf = conf
             mejor_box  = box.xywh[0]
 
-    if mejor_box is not None:
-        x_c, y_c, w, h = map(int, mejor_box)
-        x = x_c - w // 2
-        y = y_c - h // 2
-        
-        # Pequeño padding (3%) para no cortar los bordes de letras exteriores
-        px = max(1, int(w * 0.03))
-        py = max(1, int(h * 0.03))
-        
-        y1 = max(0, y - py)
-        y2 = min(frame.shape[0], y + h + py)
-        x1 = max(0, x - px)
-        x2 = min(frame.shape[1], x + w + px)
-        
-        recorte = frame[y1:y2, x1:x2]
-        return recorte, (x1, y1, x2 - x1, y2 - y1)
-        
-    return None, None
+    if mejor_box is None:
+        return None, None
+
+    x_c, y_c, w, h = map(int, mejor_box)
+    x = x_c - w // 2
+    y = y_c - h // 2
+
+    # Padding 8% para no cortar bordes de letras exteriores
+    px = max(2, int(w * 0.08))
+    py = max(2, int(h * 0.08))
+
+    y1 = max(0, y - py)
+    y2 = min(frame.shape[0], y + h + py)
+    x1 = max(0, x - px)
+    x2 = min(frame.shape[1], x + w + px)
+
+    recorte = frame[y1:y2, x1:x2]
+    return recorte, (x1, y1, x2 - x1, y2 - y1)
 
 
 # ================================================================
-#  2. SEGMENTACIÓN DE CARACTERES — MOTOR MEJORADO
+#  2. Preprocesamiento de la región de placa
+# ================================================================
+
+def _sharpening_kernel() -> np.ndarray:
+    """Kernel de enfoque laplaciano suave."""
+    return np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+
+
+def _preparar_recorte(recorte: np.ndarray) -> np.ndarray:
+    """
+    Escala el recorte y aplica sharpening + denoise.
+    Optimizado para imágenes de cámara móvil con motion blur.
+    """
+    h_r, w_r = recorte.shape[:2]
+
+    # Escalar a mínimo 80px alto × 200px ancho para mejorar segmentación
+    ALTO_MIN, ANCHO_MIN = 80, 200
+    if h_r < ALTO_MIN or w_r < ANCHO_MIN:
+        escala  = max(ALTO_MIN / h_r, ANCHO_MIN / w_r)
+        nuevo_w = int(w_r * escala)
+        nuevo_h = int(h_r * escala)
+        recorte = cv2.resize(recorte, (nuevo_w, nuevo_h), interpolation=cv2.INTER_CUBIC)
+
+    # Medir borrosidad (Laplacian variance); si < 80 → afilar
+    gris_test = cv2.cvtColor(recorte, cv2.COLOR_BGR2GRAY)
+    blur_score = cv2.Laplacian(gris_test, cv2.CV_64F).var()
+    if blur_score < 80:
+        recorte = cv2.filter2D(recorte, -1, _sharpening_kernel())
+
+    return recorte
+
+
+# ================================================================
+#  3. Segmentación de caracteres
 # ================================================================
 
 def _binarizar(gris: np.ndarray, modo: str) -> np.ndarray:
-    """Devuelve imagen binarizada según el modo (letras blancas / fondo negro)."""
     if modo == "adaptativa":
         return cv2.adaptiveThreshold(
-            gris, 255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 31, 10
+            gris, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, 31, 10,
         )
     elif modo == "adaptativa_suave":
         return cv2.adaptiveThreshold(
-            gris, 255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 21, 7
+            gris, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, 21, 7,
         )
     elif modo == "otsu":
         _, b = cv2.threshold(gris, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -151,26 +186,25 @@ def _binarizar(gris: np.ndarray, modo: str) -> np.ndarray:
 
 
 def _extraer_cajas(binaria: np.ndarray, h_zona: int) -> list[tuple]:
-    """Extrae bounding-boxes candidatos a caracteres."""
     kernel   = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     dilatada = cv2.dilate(binaria, kernel, iterations=1)
-    contornos, _ = cv2.findContours(dilatada, cv2.RETR_EXTERNAL,
-                                    cv2.CHAIN_APPROX_SIMPLE)
+    contornos, _ = cv2.findContours(dilatada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     cajas = []
     for c in contornos:
         x, y, w, h = cv2.boundingRect(c)
         ar   = float(w) / h if h > 0 else 0
         area = w * h
+        # Umbral altura más estricto (0.35 vs 0.28) para filtrar "ECUADOR" pequeño
         if (0.06 < ar < 1.6
-                and h > h_zona * 0.28
+                and h > h_zona * 0.35
                 and h < h_zona * 0.99
-                and area > 15):
+                and area > 20):
             cajas.append((x, y, w, h))
 
-    # Ordenar izquierda → derecha
     cajas.sort(key=lambda b: b[0])
 
-    # Suprimir duplicados solapados (NMS)
+    # NMS: suprimir duplicados solapados
     filtradas = []
     for caja in cajas:
         x1, y1, w1, h1 = caja
@@ -185,20 +219,13 @@ def _extraer_cajas(binaria: np.ndarray, h_zona: int) -> list[tuple]:
 
 
 def _split_anchos(cajas: list, binaria: np.ndarray, h_zona: int) -> list[tuple]:
-    """
-    Divide bounding-boxes inusualmente anchos (letras fusionadas).
-    Heurística: si un box tiene el doble del ancho promedio, lo parte por la mitad.
-    """
     if len(cajas) < 2:
         return cajas
-
-    anchos = [w for _, _, w, _ in cajas]
+    anchos    = [w for _, _, w, _ in cajas]
     ancho_med = np.median(anchos)
-
     resultado = []
     for (x, y, w, h) in cajas:
         if w > ancho_med * 1.7 and w > 10:
-            # Dividir en dos mitades iguales
             mitad = w // 2
             resultado.append((x,        y, mitad,     h))
             resultado.append((x + mitad, y, w - mitad, h))
@@ -209,55 +236,42 @@ def _split_anchos(cajas: list, binaria: np.ndarray, h_zona: int) -> list[tuple]:
 
 
 def _proyeccion_vertical(zona_bin: np.ndarray) -> list[tuple]:
-    """
-    Fallback: suma de píxeles por columna → encuentra los 'valles'
-    que separan caracteres. Muy robusto para texto horizontal limpio.
-    """
     h, w = zona_bin.shape
-    proj = zona_bin.sum(axis=0).astype(float)
-
-    # Normalizar y suavizar
+    proj  = zona_bin.sum(axis=0).astype(float)
     if proj.max() == 0:
         return []
-    proj = proj / proj.max()
-    kernel_s = np.ones(max(1, w // 40)) / max(1, w // 40)
-    proj_s = np.convolve(proj, kernel_s, mode='same')
+    proj /= proj.max()
+    k     = max(1, w // 40)
+    proj  = np.convolve(proj, np.ones(k) / k, mode="same")
 
-    umbral = 0.06
-    activo = (proj_s > umbral).astype(np.uint8)
-
-    # Encontrar inicio y fin de cada segmento activo
+    activo = (proj > 0.06).astype(np.uint8)
     segmentos = []
     en_seg = False
     ini = 0
     for col in range(w):
         if activo[col] and not en_seg:
-            ini = col
-            en_seg = True
+            ini = col; en_seg = True
         elif not activo[col] and en_seg:
             fin = col
-            seg_bin = zona_bin[:, ini:fin]
-            rows = np.where(seg_bin.sum(axis=1) > 0)[0]
+            seg = zona_bin[:, ini:fin]
+            rows = np.where(seg.sum(axis=1) > 0)[0]
             if len(rows) > 0:
-                y_s = int(rows.min())
-                h_s = int(rows.max()) - y_s + 1
+                y_s = int(rows.min()); h_s = int(rows.max()) - y_s + 1
                 w_s = fin - ini
                 ar  = w_s / h_s if h_s > 0 else 0
-                if 0.05 < ar < 1.8 and h_s > h * 0.25:
+                if 0.05 < ar < 1.8 and h_s > h * 0.30:
                     segmentos.append((ini, y_s, w_s, h_s))
             en_seg = False
     if en_seg:
         fin = w
-        seg_bin = zona_bin[:, ini:fin]
-        rows = np.where(seg_bin.sum(axis=1) > 0)[0]
+        seg = zona_bin[:, ini:fin]
+        rows = np.where(seg.sum(axis=1) > 0)[0]
         if len(rows) > 0:
-            y_s = int(rows.min())
-            h_s = int(rows.max()) - y_s + 1
+            y_s = int(rows.min()); h_s = int(rows.max()) - y_s + 1
             w_s = fin - ini
             ar  = w_s / h_s if h_s > 0 else 0
-            if 0.05 < ar < 1.8 and h_s > h * 0.25:
+            if 0.05 < ar < 1.8 and h_s > h * 0.30:
                 segmentos.append((ini, y_s, w_s, h_s))
-
     return segmentos
 
 
@@ -266,7 +280,6 @@ def _distancia_objetivo(n: int) -> int:
 
 
 def _cajas_a_imagenes(cajas: list, binaria: np.ndarray) -> list[np.ndarray]:
-    """Recorta, cuadra con padding y escala cada carácter a 32×32."""
     imagenes = []
     for (x, y, w, h) in cajas:
         char_img = binaria[y: y + h, x: x + w]
@@ -282,44 +295,44 @@ def _cajas_a_imagenes(cajas: list, binaria: np.ndarray) -> list[np.ndarray]:
 def segmentar_caracteres(recorte: np.ndarray) -> list[np.ndarray]:
     """
     Motor de segmentación multi-estrategia:
-      - Escala recortes pequeños a mínimo 120px de ancho
-      - Grid de 5 zonas × 5 modos × 2 inversiones = 50 combinaciones
-      - Split automático de boxes anchos (letras pegadas)
+      - Preprocesa la imagen (sharpening para DroidCam)
+      - Grid de 5 zonas (top,bot) × 5 modos × 2 inversiones
+      - Zona con bounds superior e inferior para excluir "ECUADOR" y texto pie
+      - Split automático de boxes anchos
       - Proyección vertical como fallback
-      - Devuelve la combinación más cercana a 6-7 caracteres
     """
     if recorte is None or recorte.size == 0:
         return []
 
-    # ── Escalar si el recorte es demasiado pequeño ──────────────
-    # Letras de < 10 px de alto son imposibles de segmentar.
-    # Escalamos hasta que el alto sea al menos 50 px.
+    recorte = _preparar_recorte(recorte)
     h_r, w_r = recorte.shape[:2]
-    ALTO_MIN = 50
-    ANCHO_MIN = 120
-    if h_r < ALTO_MIN or w_r < ANCHO_MIN:
-        escala = max(ALTO_MIN / h_r, ANCHO_MIN / w_r)
-        nuevo_w = int(w_r * escala)
-        nuevo_h = int(h_r * escala)
-        recorte = cv2.resize(recorte, (nuevo_w, nuevo_h), interpolation=cv2.INTER_CUBIC)
-        h_r, w_r = recorte.shape[:2]
 
-    mejor_cajas    = []
-    mejor_bin      = None
-    mejor_zona_pct = 0.18
-    mejor_dist     = float("inf")
+    mejor_cajas = []
+    mejor_bin   = None
+    mejor_dist  = float("inf")
 
-    ZONAS  = [0.18, 0.10, 0.25, 0.00, 0.30]
-    MODOS  = ["adaptativa", "adaptativa_suave", "otsu", "otsu_normal", "umbral_fijo"]
+    # (fracción_top, fracción_bot): zona donde están los caracteres principales.
+    # Los bounds inferiores evitan incluir el texto pequeño al pie de la placa.
+    ZONAS = [
+        (0.20, 0.95),
+        (0.15, 0.95),
+        (0.25, 0.92),
+        (0.30, 0.95),
+        (0.10, 0.90),
+        (0.35, 0.98),
+    ]
+    MODOS = ["adaptativa", "adaptativa_suave", "otsu", "otsu_normal", "umbral_fijo"]
 
-    for zona_pct in ZONAS:
-        zona = recorte[int(h_r * zona_pct):, :]
-        h_z  = zona.shape[0]
-        if h_z < 8:
+    for top_pct, bot_pct in ZONAS:
+        y_top = int(h_r * top_pct)
+        y_bot = int(h_r * bot_pct)
+        zona  = recorte[y_top:y_bot, :]
+        h_z   = zona.shape[0]
+        if h_z < 10:
             continue
 
         gris  = cv2.cvtColor(zona, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+        clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(4, 4))
         gris  = clahe.apply(gris)
         gris  = cv2.GaussianBlur(gris, (3, 3), 0)
 
@@ -331,13 +344,11 @@ def segmentar_caracteres(recorte: np.ndarray) -> list[np.ndarray]:
 
                 cajas = _extraer_cajas(binaria, h_z)
 
-                # Intentar split si faltan chars
                 if len(cajas) < 6:
                     cajas_split = _split_anchos(cajas, binaria, h_z)
                     if _distancia_objetivo(len(cajas_split)) < _distancia_objetivo(len(cajas)):
                         cajas = cajas_split
 
-                # Recortar exceso si sobran
                 if len(cajas) > 7:
                     cajas_top = sorted(cajas, key=lambda b: b[2] * b[3], reverse=True)[:7]
                     cajas_top.sort(key=lambda b: b[0])
@@ -346,10 +357,9 @@ def segmentar_caracteres(recorte: np.ndarray) -> list[np.ndarray]:
 
                 dist = _distancia_objetivo(len(cajas))
                 if dist < mejor_dist:
-                    mejor_dist    = dist
-                    mejor_cajas   = cajas
-                    mejor_bin     = binaria
-                    mejor_zona_pct = zona_pct
+                    mejor_dist = dist
+                    mejor_cajas = cajas
+                    mejor_bin   = binaria
 
                 if mejor_dist == 0:
                     break
@@ -358,21 +368,23 @@ def segmentar_caracteres(recorte: np.ndarray) -> list[np.ndarray]:
         if mejor_dist == 0:
             break
 
-    # ── Fallback: proyección vertical ───────────────────────────
+    # ── Fallback: proyección vertical ──────────────────────────
     if mejor_dist > 0:
-        for zona_pct in ZONAS:
-            zona = recorte[int(h_r * zona_pct):, :]
-            h_z  = zona.shape[0]
-            if h_z < 8:
+        for top_pct, bot_pct in ZONAS:
+            y_top = int(h_r * top_pct)
+            y_bot = int(h_r * bot_pct)
+            zona  = recorte[y_top:y_bot, :]
+            h_z   = zona.shape[0]
+            if h_z < 10:
                 continue
             gris  = cv2.cvtColor(zona, cv2.COLOR_BGR2GRAY)
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+            clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(4, 4))
             gris  = clahe.apply(gris)
             gris  = cv2.GaussianBlur(gris, (3, 3), 0)
 
             for modo in ["adaptativa", "otsu"]:
                 for invertir in (False, True):
-                    binaria = _binarizar(gris, modo)
+                    binaria     = _binarizar(gris, modo)
                     if invertir:
                         binaria = cv2.bitwise_not(binaria)
 
@@ -382,10 +394,9 @@ def segmentar_caracteres(recorte: np.ndarray) -> list[np.ndarray]:
 
                     dist = _distancia_objetivo(len(cajas_proy))
                     if dist < mejor_dist:
-                        mejor_dist    = dist
-                        mejor_cajas   = cajas_proy
-                        mejor_bin     = binaria
-                        mejor_zona_pct = zona_pct
+                        mejor_dist  = dist
+                        mejor_cajas = cajas_proy
+                        mejor_bin   = binaria
 
                     if mejor_dist == 0:
                         break
@@ -401,14 +412,19 @@ def segmentar_caracteres(recorte: np.ndarray) -> list[np.ndarray]:
 
 
 # ----------------------------------------------------------------
-#  3. PREDICCIÓN POSICIONAL
-#     Posiciones 0-2 → clase letra (idx 0-25)
-#     Posiciones 3-6 → clase dígito (idx 26-35)
+#  4. Predicción posicional con TTA ligero
+#     Pos 0-2 → letras | Pos 3-6 → dígitos
 # ----------------------------------------------------------------
+def _variante_char(img: np.ndarray) -> np.ndarray:
+    """Versión CLAHE del carácter para TTA."""
+    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(2, 2))
+    return clahe.apply(img)
+
+
 def predecir_caracteres(imagenes: list[np.ndarray]) -> tuple[str, float]:
     """
-    Inferencia posicional: las primeras 3 posiciones se restringen
-    a letras y las siguientes a dígitos, usando los logits directamente.
+    Inferencia posicional con TTA ligero (original + CLAHE).
+    Las primeras 3 posiciones se restringen a letras, las siguientes a dígitos.
     """
     if not imagenes:
         return "", 0.0
@@ -416,18 +432,20 @@ def predecir_caracteres(imagenes: list[np.ndarray]) -> tuple[str, float]:
     modelo      = cargar_cnn()
     dispositivo = resolver_dispositivo()
 
-    tensores = [
-        torch.tensor(img, dtype=torch.float32).unsqueeze(0).unsqueeze(0) / 255.0
-        for img in imagenes
-    ]
-    batch = torch.cat(tensores, dim=0).to(dispositivo)
-
-    texto     = ""
-    suma_conf = 0.0
+    def _build_batch(imgs):
+        return torch.cat([
+            torch.tensor(im, dtype=torch.float32).unsqueeze(0).unsqueeze(0) / 255.0
+            for im in imgs
+        ], dim=0).to(dispositivo)
 
     with torch.no_grad():
-        logits = modelo(batch)
+        # TTA: original + variante CLAHE → promedio de logits
+        batch_orig  = _build_batch(imagenes)
+        batch_clahe = _build_batch([_variante_char(im) for im in imagenes])
+        logits = (modelo(batch_orig) + modelo(batch_clahe)) * 0.5
 
+        texto     = ""
+        suma_conf = 0.0
         for i, row in enumerate(logits):
             mascara = torch.full((NUM_CLASES,), float("-inf"), device=dispositivo)
             if i < 3:
@@ -444,64 +462,62 @@ def predecir_caracteres(imagenes: list[np.ndarray]) -> tuple[str, float]:
 
 
 # ----------------------------------------------------------------
-#  4. VALIDACIÓN TOLERANTE
-#     Acepta strings de 5-8 chars y busca la mejor ventana de 6-7
+#  5. Validación tolerante (formato ecuatoriano: ABC-1234)
 # ----------------------------------------------------------------
 def validar_y_corregir_placa(placa_cruda: str) -> str:
-    """
-    Intenta armar una placa válida a partir de la cadena cruda.
-    Filtra estrictamente para el formato Ecuatoriano: 3 letras y 3-4 números.
-    """
     if len(placa_cruda) < 6 or len(placa_cruda) > 9:
         return ""
 
-    # Probar ventanas de tamaño 7 y 6 (las placas ecuatorianas tienen 6 o 7 caracteres)
     for largo in (7, 6):
         for inicio in range(len(placa_cruda) - largo + 1):
             candidato = placa_cruda[inicio: inicio + largo]
-            letras  = candidato[:3]
-            numeros = candidato[3:]
-            placa   = f"{letras}-{numeros}"
-            # Formato estricto: 3 letras obligatorias, 3 o 4 números obligatorios
+            letras    = candidato[:3]
+            numeros   = candidato[3:]
+            placa     = f"{letras}-{numeros}"
             if re.match(r"^[A-Z]{3}-\d{3,4}$", placa):
                 return placa
     return ""
 
 
+# ----------------------------------------------------------------
+#  Fallback: EasyOCR (LSTM)
+# ----------------------------------------------------------------
 _easyocr_reader = None
 
+
 def get_easyocr_placa(recorte: np.ndarray) -> str:
-    """Fallback: usa EasyOCR solo si el segmentador falla por borrosidad extrema."""
     global _easyocr_reader
     if _easyocr_reader is None:
         import easyocr
         _easyocr_reader = easyocr.Reader(["es"], gpu=True, verbose=False)
-        
-    # Escalar agresivamente para ayudar al LSTM
+
     h, w = recorte.shape[:2]
     if h < 80 or w < 200:
-        escala = max(80 / h, 200 / w)
-        nuevo_w = int(w * escala)
-        nuevo_h = int(h * escala)
-        recorte = cv2.resize(recorte, (nuevo_w, nuevo_h), interpolation=cv2.INTER_CUBIC)
-        
+        escala  = max(80 / h, 200 / w)
+        recorte = cv2.resize(
+            recorte,
+            (int(w * escala), int(h * escala)),
+            interpolation=cv2.INTER_CUBIC,
+        )
+
+    # Afilar para LSTM
+    recorte = cv2.filter2D(recorte, -1, _sharpening_kernel())
+
     import unicodedata
-    res = _easyocr_reader.readtext(
+    res   = _easyocr_reader.readtext(
         recorte,
         allowlist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.",
-        paragraph=False
+        paragraph=False,
     )
     texto = " ".join(t for _, t, _ in res)
     texto = unicodedata.normalize("NFD", texto.upper())
     texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
-    m = re.search(r"([A-Z]{3})[\s\-.]?(\d{3,4})", texto)
-    if m:
-        return f"{m.group(1)}-{m.group(2)}"
-    return ""
+    m     = re.search(r"([A-Z]{3})[\s\-.]?(\d{3,4})", texto)
+    return f"{m.group(1)}-{m.group(2)}" if m else ""
 
 
 # ----------------------------------------------------------------
-#  INTERFAZ PÚBLICA (compatibilidad con scripts existentes)
+#  Interfaz pública
 # ----------------------------------------------------------------
 def leer_placa_desde_recorte(
     recorte: np.ndarray, max_variantes=None
@@ -509,15 +525,17 @@ def leer_placa_desde_recorte(
     chars       = segmentar_caracteres(recorte)
     texto, conf = predecir_caracteres(chars)
     placa       = validar_y_corregir_placa(texto)
-    
-    # Fallback LSTM (EasyOCR) para placas fuertemente borrosas/fusionadas
-    if not placa:
+
+    # Fallback EasyOCR cuando CNN falla O confianza < 0.80.
+    # EasyOCR (LSTM) es superior para placas reales con motion blur o baja resolución.
+    # Con threading, el LSTM corre en background sin bloquear la captura de frames.
+    if not placa or conf < 0.80:
         placa_ocr = get_easyocr_placa(recorte)
         if placa_ocr:
             placa = placa_ocr
             texto = placa_ocr.replace("-", "")
-            conf = 0.50
-            
+            conf  = 0.75
+
     return placa, texto, conf
 
 
@@ -527,13 +545,12 @@ def reconocer_placa(
     recorte, bbox = detectar_region_placa(frame)
     if recorte is None:
         return "", None, 0.0
-    
     placa, _texto, _conf = leer_placa_desde_recorte(recorte)
     return placa, bbox, _conf
 
 
 # ----------------------------------------------------------------
-#  PRUEBA CON IMAGEN ESTÁTICA
+#  Prueba con imagen estática
 # ----------------------------------------------------------------
 if __name__ == "__main__":
     ruta  = sys.argv[1] if len(sys.argv) > 1 else "prueba_placa.jpg"
@@ -542,7 +559,7 @@ if __name__ == "__main__":
         print(f"No se pudo cargar: {ruta}")
     else:
         placa, bbox, conf = reconocer_placa(frame)
-        print(f"Placa: {placa!r} (Confianza: {conf:.2f})")
+        print(f"Placa: {placa!r}  Confianza: {conf:.2f}")
         if bbox:
             x, y, w, h = bbox
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
