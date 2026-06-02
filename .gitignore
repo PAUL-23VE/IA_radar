@@ -1,0 +1,22 @@
+# Entorno virtual
+.venv/
+venv/
+
+# Cachés de Python
+__pycache__/
+*.pyc
+
+# Config local de Claude
+.claude/
+
+# Salidas de prueba
+output_test/
+resultado.jpg
+dev_outputs/
+runs/
+
+# Modelos descargados automáticamente por ultralytics
+yolov8n.pt
+yolo11n.pt
+
+# Nota: best.pt (detector YOLOv11) SÍ se versiona — es el modelo del proyecto.

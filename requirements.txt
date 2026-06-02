@@ -1,0 +1,16 @@
+# Detección de placas (YOLOv11) + OCR
+ultralytics>=8.3.0
+easyocr
+opencv-python
+numpy
+
+# Velocidad / lógica difusa
+scikit-fuzzy
+
+# Base de datos
+psycopg2-binary
+
+# (Legacy) CNN de caracteres EMNIST/MNIST — solo si se reentrena el modelo .h5
+# tensorflow
+# tensorflow-datasets
+# scikit-image
