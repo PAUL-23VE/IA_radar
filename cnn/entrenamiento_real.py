@@ -181,7 +181,34 @@ def entrenar():
 
     print(f"Total train: {len(train_dataset)} | test: {len(test_dataset)}")
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  num_workers=0)
+    # ── WeightedRandomSampler: balancea clases sobre-/sub-representadas ──
+    # Contar etiquetas en todo el dataset de entrenamiento
+    etiquetas_train = []
+    for i in range(len(ds_real_train)):
+        _, lbl = ds_real_train[i]
+        etiquetas_train.append(lbl)
+    # Sintéticos: muestra representativa del subset seleccionado
+    for idx in indices_sin[:min(1000, len(indices_sin))].tolist():
+        _, lbl = sintetico_full[idx]
+        etiquetas_train.append(lbl)
+
+    conteo = np.bincount(etiquetas_train, minlength=NUM_CLASES).astype(float)
+    conteo = np.where(conteo == 0, 1.0, conteo)          # evitar div/0
+    peso_clase = 1.0 / conteo
+    pesos_muestra = [peso_clase[lbl] for lbl in etiquetas_train]
+    # Extender pesos para el resto del subset sintético (peso uniforme del promedio)
+    peso_medio = float(np.mean(list(peso_clase)))
+    n_extra = len(train_dataset) - len(etiquetas_train)
+    pesos_muestra.extend([peso_medio] * n_extra)
+
+    sampler = WeightedRandomSampler(
+        weights=pesos_muestra,
+        num_samples=len(train_dataset),
+        replacement=True,
+    )
+    print(f"Clases con 0 muestras reales: {int((conteo == 1.0).sum())} / {NUM_CLASES}")
+
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, sampler=sampler, num_workers=0)
     test_loader  = DataLoader(test_dataset,  batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
     # ── Cargar modelo base y afinar ─────────────────────────────
