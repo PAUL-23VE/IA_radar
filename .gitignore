@@ -2,27 +2,47 @@
 .venv/
 venv/
 
-# Cachés de Python
+# Caché Python
 __pycache__/
 *.pyc
 
-# Config local de Claude
+# Claude local
 .claude/
 
-# Salidas de prueba
+# Salidas generadas en ejecución
+capturas/
+registros/
 output_test/
 resultado.jpg
 dev_outputs/
 runs/
 
-# Datasets descargados automáticamente
+# Datasets (grandes, no versionar)
 data/
-# Modelos descargados automáticamente por ultralytics
+Dataset_OCR_Placas/
+dataset_propio/
+
+# Videos de prueba
+videos/
+
+# Modelos descargados por ultralytics
 yolov8n.pt
 yolo11n.pt
 
-# Nota: best.pt (detector YOLOv11) SÍ se versiona — es el modelo del proyecto.
+# Modelos legacy (supersedidos por models/ocr_char.pt)
+models/crnn_placas.pt
+models/modelo_entrenado.h5
 
-# Recortes de caracteres generados localmente
-dataset_propio/
+# Scripts legacy (generación sintética / CRNN / evaluación antigua)
+cnn/crnn.py
+cnn/entrenar_crnn.py
+scripts/generar_dataset_crnn.py
+scripts/generar_sinteticos_placa.py
 
+# Auxiliares LaTeX
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.fls
+docs/*.fdb_latexmk
+docs/*.toc

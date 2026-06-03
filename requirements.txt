@@ -1,16 +1,14 @@
-# Detección de placas (YOLOv11) + OCR
+# Detección de placas
 ultralytics>=8.3.0
-easyocr
+
+# Visión por computador
 opencv-python
 numpy
+pillow
 
-# Velocidad / lógica difusa
+# CNN clasificador de caracteres
+torch
+torchvision
+
+# Lógica difusa (sanción por velocidad)
 scikit-fuzzy
-
-# Base de datos
-psycopg2-binary
-
-# (Legacy) CNN de caracteres EMNIST/MNIST — solo si se reentrena el modelo .h5
-# tensorflow
-# tensorflow-datasets
-# scikit-image

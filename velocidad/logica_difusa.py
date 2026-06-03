@@ -2,10 +2,13 @@
 velocidad/logica_difusa.py
 Clasifica la velocidad de un vehículo usando lógica difusa (scikit-fuzzy).
 
-Umbrales del proyecto (del cuaderno):
-  v ≤ 20 km/h  → feliz (sin sanción)
-  v ~ 25 km/h  → normal
-  v ≥ 30 km/h  → multa (días sin ingreso al parqueadero)
+Política del proyecto (parqueadero / zona controlada):
+  0 – 10 km/h   → felicitaciones (sin sanción)
+  10 – 20 km/h  → normal (advertencia, sin sanción)
+  > 20 km/h     → MULTA: X horas de indisponibilidad del vehículo
+
+La salida difusa (`horas`) escala las horas de indisponibilidad según el
+exceso de velocidad por encima de 20 km/h.
 """
 
 import numpy as np
@@ -13,47 +16,46 @@ import skfuzzy as fuzz
 from skfuzzy import control as ctrl
 
 
-# ----------------------------------------------------------------
-#  DEFINICIÓN DEL SISTEMA DIFUSO
-# ----------------------------------------------------------------
+# Universo de velocidad (km/h) y de sanción (horas)
+V_MAX = 40
+H_MAX = 48
+
+# ── Funciones de membresía de VELOCIDAD (cortes en 10 y 20 km/h) ──
+#   felicitacion: pleno hasta 8, difuso hasta 11
+#   normal      : centrado en 15 (zona 10-20)
+#   multa se subdivide para que las HORAS escalen con el exceso:
+#     multa_leve : exceso moderado (~20-30 km/h)
+#     multa_grave: exceso fuerte   (> 28 km/h)
+_MF_FELIZ       = [0,  0,  8,  11]
+_MF_NORMAL      = [9,  15, 21]
+_MF_MULTA_LEVE  = [19, 24, 30]
+_MF_MULTA_GRAVE = [28, 34, V_MAX, V_MAX]
+
 
 def crear_sistema_difuso():
-    """
-    Crea y retorna el sistema de control difuso configurado.
-    Solo se llama una vez.
-    """
+    """Crea y retorna el simulador del sistema de control difuso (una sola vez)."""
+    velocidad = ctrl.Antecedent(np.arange(0, V_MAX + 1, 1), 'velocidad')
+    horas     = ctrl.Consequent(np.arange(0, H_MAX + 1, 1), 'horas')
 
-    # Variable de entrada: velocidad (0 a 60 km/h)
-    velocidad = ctrl.Antecedent(np.arange(0, 61, 1), 'velocidad')
+    velocidad['felicitacion'] = fuzz.trapmf(velocidad.universe, _MF_FELIZ)
+    velocidad['normal']       = fuzz.trimf(velocidad.universe,  _MF_NORMAL)
+    velocidad['multa_leve']   = fuzz.trimf(velocidad.universe,  _MF_MULTA_LEVE)
+    velocidad['multa_grave']  = fuzz.trapmf(velocidad.universe, _MF_MULTA_GRAVE)
 
-    # Variable de salida: nivel de sanción (0 a 10)
-    sancion = ctrl.Consequent(np.arange(0, 11, 1), 'sancion')
+    # Horas de indisponibilidad: ninguna / moderada / alta
+    horas['ninguna']  = fuzz.trimf(horas.universe, [0, 0, 6])
+    horas['moderada'] = fuzz.trimf(horas.universe, [4, 16, 28])
+    horas['alta']     = fuzz.trapmf(horas.universe, [24, 40, H_MAX, H_MAX])
 
-    # ── Funciones de membresía para VELOCIDAD ────────────────
-    #   feliz:  [0, 0, 18, 22]   plenamente feliz hasta 18, difuso hasta 22
-    #   normal: [18, 25, 32]     centrado en 25
-    #   multa:  [28, 35, 60, 60] multa desde 28, plena desde 35
-    velocidad['feliz']  = fuzz.trapmf(velocidad.universe, [0,  0,  18, 22])
-    velocidad['normal'] = fuzz.trimf(velocidad.universe,  [18, 25, 32])
-    velocidad['multa']  = fuzz.trapmf(velocidad.universe, [28, 35, 60, 60])
-
-    # ── Funciones de membresía para SANCIÓN ──────────────────
-    sancion['sin_sancion'] = fuzz.trimf(sancion.universe, [0, 0, 3])
-    sancion['leve']        = fuzz.trimf(sancion.universe, [2, 4, 6])
-    sancion['severa']      = fuzz.trimf(sancion.universe, [5, 10, 10])
-
-    # ── Reglas difusas ────────────────────────────────────────
-    regla1 = ctrl.Rule(velocidad['feliz'],  sancion['sin_sancion'])
-    regla2 = ctrl.Rule(velocidad['normal'], sancion['leve'])
-    regla3 = ctrl.Rule(velocidad['multa'],  sancion['severa'])
-
-    sistema = ctrl.ControlSystem([regla1, regla2, regla3])
-    simulador = ctrl.ControlSystemSimulation(sistema)
-
-    return simulador
+    reglas = [
+        ctrl.Rule(velocidad['felicitacion'], horas['ninguna']),
+        ctrl.Rule(velocidad['normal'],       horas['ninguna']),
+        ctrl.Rule(velocidad['multa_leve'],   horas['moderada']),
+        ctrl.Rule(velocidad['multa_grave'],  horas['alta']),
+    ]
+    return ctrl.ControlSystemSimulation(ctrl.ControlSystem(reglas))
 
 
-# Instancia global (se crea una sola vez)
 _sistema = None
 
 def obtener_sistema():
@@ -63,75 +65,61 @@ def obtener_sistema():
     return _sistema
 
 
-# ----------------------------------------------------------------
-#  CLASIFICAR UNA VELOCIDAD
-# ----------------------------------------------------------------
-
 def clasificar_velocidad(velocidad_kmh: float) -> dict:
     """
     Recibe la velocidad en km/h y retorna un diccionario con:
-      - velocidad:      el valor ingresado
-      - clasificacion:  'feliz', 'normal' o 'multa'
-      - sancion:        valor numérico de sanción (0-10)
-      - dias_sin_ingreso: días que no puede ingresar al parqueadero
-      - mensaje:        descripción para mostrar al usuario
+      - velocidad:              valor (clamp 0..V_MAX)
+      - clasificacion:          'felicitacion', 'normal' o 'multa'
+      - horas_indisponibilidad: horas que el vehículo no puede ingresar (solo multa)
+      - grados_membresia:       grados difusos de cada categoría
+      - mensaje:                descripción para mostrar al usuario
     """
-    # Clamp para evitar errores fuera del universo
-    v = float(np.clip(velocidad_kmh, 0, 60))
+    v = float(np.clip(velocidad_kmh, 0, V_MAX))
 
     sim = obtener_sistema()
     sim.input['velocidad'] = v
     sim.compute()
+    horas_difusas = float(sim.output.get('horas', 0.0))
 
-    nivel_sancion = sim.output['sancion']
-
-    # ── Calcular membresía dominante ──────────────────────────
-    universo = np.arange(0, 61, 1)
-    mem_feliz  = fuzz.trapmf(universo, [0, 0, 18, 22])
-    mem_normal = fuzz.trimf(universo,  [18, 25, 32])
-    mem_multa  = fuzz.trapmf(universo, [28, 35, 60, 60])
-
-    idx = int(v)
+    # Membresía dominante → clasificación (multa = max de leve/grave)
+    universo = np.arange(0, V_MAX + 1, 1)
+    g_leve  = fuzz.interp_membership(universo, fuzz.trimf(universo,  _MF_MULTA_LEVE),  v)
+    g_grave = fuzz.interp_membership(universo, fuzz.trapmf(universo, _MF_MULTA_GRAVE), v)
     grados = {
-        'feliz':  fuzz.interp_membership(universo, mem_feliz,  v),
-        'normal': fuzz.interp_membership(universo, mem_normal, v),
-        'multa':  fuzz.interp_membership(universo, mem_multa,  v)
+        'felicitacion': fuzz.interp_membership(universo, fuzz.trapmf(universo, _MF_FELIZ),  v),
+        'normal':       fuzz.interp_membership(universo, fuzz.trimf(universo,  _MF_NORMAL), v),
+        'multa':        max(g_leve, g_grave),
     }
     clasificacion = max(grados, key=grados.get)
 
-    # ── Días de sanción ───────────────────────────────────────
-    if clasificacion == 'feliz':
-        dias = 0
-        mensaje = f"Velocidad aceptable ({v:.1f} km/h) — Sin sanción"
+    if clasificacion == 'felicitacion':
+        horas = 0
+        mensaje = f"Felicitaciones — velocidad prudente ({v:.1f} km/h)"
     elif clasificacion == 'normal':
-        dias = int(nivel_sancion * 0.5)          # 0-3 días
-        mensaje = f"Velocidad moderada ({v:.1f} km/h) — {dias} día(s) de restricción"
+        horas = 0
+        mensaje = f"Velocidad normal ({v:.1f} km/h) — sin sanción"
     else:  # multa
-        dias = int(nivel_sancion)                 # 0-10 días
-        mensaje = f"EXCESO DE VELOCIDAD ({v:.1f} km/h) — {dias} día(s) sin ingreso al parqueadero"
+        horas = int(round(horas_difusas))
+        mensaje = (f"EXCESO DE VELOCIDAD ({v:.1f} km/h) — "
+                   f"{horas} hora(s) de indisponibilidad del vehículo")
 
     return {
-        "velocidad":        v,
-        "clasificacion":    clasificacion,
-        "sancion":          round(nivel_sancion, 2),
-        "dias_sin_ingreso": dias,
-        "grados_membresia": {k: round(g, 3) for k, g in grados.items()},
-        "mensaje":          mensaje
+        "velocidad":              v,
+        "clasificacion":          clasificacion,
+        "horas_indisponibilidad": horas,
+        "grados_membresia":       {k: round(g, 3) for k, g in grados.items()},
+        "mensaje":                mensaje,
     }
 
 
-# ----------------------------------------------------------------
-#  PRUEBA
-# ----------------------------------------------------------------
-
 if __name__ == "__main__":
-    casos = [10, 18, 22, 25, 28, 32, 40, 55]
-    print("\n{'='*60}")
+    casos = [5, 8, 12, 15, 18, 22, 28, 35, 40]
+    print("=" * 64)
     print("  SISTEMA DE LÓGICA DIFUSA — Clasificación de velocidad")
-    print("="*60)
+    print("=" * 64)
     for v in casos:
         r = clasificar_velocidad(v)
         print(f"\n  {r['mensaje']}")
-        print(f"    Membresía: feliz={r['grados_membresia']['feliz']:.2f}  "
+        print(f"    Membresía: felicitacion={r['grados_membresia']['felicitacion']:.2f}  "
               f"normal={r['grados_membresia']['normal']:.2f}  "
               f"multa={r['grados_membresia']['multa']:.2f}")

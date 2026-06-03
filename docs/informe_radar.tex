@@ -1,0 +1,378 @@
+\documentclass[11pt,a4paper]{article}
+
+% ----------------------------------------------------------------
+%  Paquetes
+% ----------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{codegray}{gray}{0.95}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codegray},
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  showstringspaces=false,
+}
+
+\title{\textbf{Sistema de radar inteligente de placas vehiculares}\\
+\large Detecci\'on (YOLOv11) + OCR de caracteres (CNN) + l\'ogica difusa de sanci\'on}
+\author{Proyecto final --- Inteligencia Artificial \\ Universidad T\'ecnica de Ambato}
+\date{Junio 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Se describe un sistema de visi\'on por computador para control de velocidad en una
+zona controlada (p.\,ej.\ parqueadero). El sistema: (1) detecta la regi\'on de la
+placa con \textbf{YOLOv11}, (2) segmenta y reconoce sus caracteres con una
+\textbf{red neuronal convolucional (CNN) propia} entrenada con caracteres reales,
+(3) estima la velocidad mediante dos l\'ineas virtuales, (4) decide la sanci\'on con
+un \textbf{sistema de l\'ogica difusa} y (5) registra cada evento en \textbf{JSON}
+junto con una captura del fotograma. No se usa EasyOCR ni base de datos relacional.
+La precisi\'on por car\'acter en el conjunto de prueba es del \textbf{91{,}3\,\%}
+(\textbf{93{,}6\,\%} con decodificaci\'on posicional); la \textbf{votaci\'on temporal
+multi-frame} recupera la placa correcta a nivel de secuencia en tiempo real.
+\end{abstract}
+
+% ================================================================
+\section{Arquitectura general}
+% ================================================================
+El sistema procesa un flujo de video en tiempo real con la siguiente tuber\'ia:
+
+\begin{center}
+\fbox{\parbox{0.92\textwidth}{\centering
+\textsf{Frame} $\rightarrow$ \textsf{YOLOv11 (regi\'on de placa)} $\rightarrow$
+\textsf{Preproceso (gris+CLAHE)} $\rightarrow$ \textsf{Segmentaci\'on de caracteres}
+$\rightarrow$ \textsf{CNN (36 clases)} $\rightarrow$ \textsf{Decodificaci\'on
+posicional} $\rightarrow$ \textsf{Votaci\'on temporal} $\rightarrow$
+\textsf{Placa}}}
+\end{center}
+
+En paralelo, un m\'odulo de fondo (\emph{background subtraction}) mide la velocidad
+con dos l\'ineas virtuales; la velocidad alimenta el sistema difuso que decide la
+sanci\'on. El reconocimiento de placa corre en un \textbf{hilo separado}
+(\texttt{RecognitionWorker}) para no bloquear la captura.
+
+\paragraph{Archivos principales.}
+\begin{itemize}[nosep]
+  \item \texttt{cnn/modelo.py} --- arquitectura CNN (\texttt{CNNPlacas}).
+  \item \texttt{cnn/entrenar\_ocr\_real.py} --- entrenamiento con datos reales.
+  \item \texttt{cnn/inferencia.py} --- detecci\'on + segmentaci\'on + clasificaci\'on.
+  \item \texttt{main.py} --- bucle principal, hilo de reconocimiento y votaci\'on.
+  \item \texttt{velocidad/logica\_difusa.py} --- sistema difuso de sanci\'on.
+  \item \texttt{utils/registro.py} --- registro de eventos en JSON.
+\end{itemize}
+
+% ================================================================
+\section{Datos de entrenamiento}
+% ================================================================
+\textbf{Importante:} el modelo de OCR se entrena con \emph{caracteres sueltos}, no con
+placas completas ni con los videos de prueba. Los videos (\texttt{videos/carros*.mp4})
+se usan \textbf{\'unicamente para evaluar}.
+
+El conjunto \texttt{Dataset\_OCR\_Placas/} contiene caracteres reales ya segmentados
+(im\'agenes PNG de $64\times64$ en escala de grises), organizados como
+\texttt{ImageFolder} en 36 clases ($0$--$9$, $A$--$Z$):
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Partici\'on & Im\'agenes & Uso \\
+\midrule
+\texttt{train} & 50\,534 & ajuste de pesos \\
+\texttt{valid} & 11\,829 & selecci\'on del mejor modelo \\
+\texttt{test}  & 5\,680  & evaluaci\'on final \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Observaciones sobre los datos.}
+\begin{itemize}[nosep]
+  \item Provienen de placas \textbf{indias} (p.\,ej.\ KA031351, DL3CAY9324). Esto no
+        importa para un clasificador de \emph{caracteres}: los glifos
+        $0$--$9$, $A$--$Z$ son universales. S\'i importa el \emph{formato}, que se
+        valida aparte (placa ecuatoriana \texttt{ABC-NNNN}).
+  \item El conjunto es \textbf{ruidoso}: algunas clases contienen recortes parciales o
+        ruido, y los pares $O/0$ y $I/1$ son glifos visualmente id\'enticos. Esto fija
+        un techo pr\'actico de exactitud por car\'acter cercano al 91\,\%.
+  \item Las \textbf{clases de letras} tienen menos muestras que las de d\'igitos
+        (p.\,ej.\ $Q=397$, $O=1016$ frente a $0=2610$), por lo que las letras se
+        reconocen con menor confianza.
+\end{itemize}
+
+\paragraph{Por qu\'e no una CRNN \emph{end-to-end}.} Un intento previo con datos
+\emph{sint\'eticos} (tiras de placa generadas con tipograf\'ias) fracas\'o porque los
+glifos sint\'eticos no se parecen a los reales. Reconstruir tiras a partir de estos
+caracteres reaprender\'ia adem\'as el \emph{formato indio} de las placas. Por eso se
+opt\'o por un \textbf{clasificador de caracteres} (glifos universales) m\'as una etapa
+de segmentaci\'on y validaci\'on de formato.
+
+% ================================================================
+\section{Modelo clasificador}
+% ================================================================
+La red \texttt{CNNPlacas} es una CNN de estilo ResNet ($\sim$1{,}2\,M par\'ametros) que
+recibe una imagen en escala de grises de $48\times48$ y produce una distribuci\'on
+sobre 36 clases.
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Bloque & Salida \\
+\midrule
+Stem ($2\times$Conv$3{\times}3$, BN, ReLU, MaxPool, Dropout) & $64\times24\times24$ \\
+ResBlock & $64\times24\times24$ \\
+Down1 (Conv stride 2) + ResBlock & $128\times12\times12$ \\
+Down2 (Conv stride 2) + ResBlock & $256\times6\times6$ \\
+Cabeza (AdaptiveAvgPool, FC, BN, Dropout, FC) & $36$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+La salida son \emph{logits} $z\in\mathbb{R}^{36}$; la probabilidad de la clase $k$ es
+\begin{equation}
+p_k = \frac{e^{z_k}}{\sum_{j=1}^{36} e^{z_j}} \quad (\text{softmax}).
+\end{equation}
+
+% ================================================================
+\section{Entrenamiento}
+% ================================================================
+Script: \texttt{cnn/entrenar\_ocr\_real.py}.
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Hiperpar\'ametro & Valor \\
+\midrule
+Tama\~no de entrada & $48\times48$ (gris) \\
+Optimizador & AdamW ($lr=10^{-3}$, \emph{weight decay} $10^{-4}$) \\
+Planificador & OneCycleLR \\
+P\'erdida & Entrop\'ia cruzada (\emph{label smoothing} $0{,}05$) \\
+\'Epocas & 35 \\
+\emph{Batch} & 256 \\
+Precisi\'on mixta (AMP) & S\'i (GPU RTX 5050) \\
+Aumentaci\'on & rotaci\'on $\pm5^\circ$, traslaci\'on/escala leve, \emph{jitter} de brillo/contraste \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+La aumentaci\'on se mantiene \textbf{suave} a prop\'osito: transformaciones agresivas
+(perspectiva y \emph{shear} fuertes) sobre caracteres peque\~nos causaban
+\emph{underfitting}. El mejor modelo (por exactitud de validaci\'on) se guarda en
+\texttt{models/ocr\_char.pt}, incluyendo la lista de clases para garantizar el mismo
+mapeo \'indice$\rightarrow$car\'acter en inferencia.
+
+\paragraph{Resultados de entrenamiento.}
+\begin{center}
+\begin{tabular}{lc}
+\toprule
+M\'etrica & Valor \\
+\midrule
+Exactitud de validaci\'on (mejor) & 91{,}6\,\% \\
+Exactitud por car\'acter en \texttt{test} & \textbf{91{,}3\,\%} \\
+Exactitud por car\'acter con decodificaci\'on posicional & \textbf{93{,}6\,\%} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Confusiones principales (esperables): $O\leftrightarrow0$, $7\rightarrow1$,
+$9\rightarrow6$, $B\leftrightarrow8$, $Z\rightarrow2$. La decodificaci\'on posicional
+(secci\'on~\ref{sec:posicional}) elimina las confusiones \emph{cruzadas}
+letra/d\'igito.
+
+% ================================================================
+\section{Inferencia}
+% ================================================================
+
+\subsection{Detecci\'on de la placa}
+YOLOv11 (\texttt{best.pt}) entrega la caja de la placa de mayor confianza. Se a\~nade
+un \emph{padding} del 8\,\% para no cortar bordes de caracteres.
+
+\subsection{Preprocesamiento}
+El recorte se pasa a gris, se aplica \emph{sharpening} si hay \emph{motion blur}
+(varianza Laplaciana $<80$) y se normaliza el contraste con \textbf{CLAHE}.
+
+\subsection{Segmentaci\'on de caracteres}
+Se usa \textbf{umbral adaptativo gaussiano} (\texttt{adaptiveThreshold},
+\texttt{BINARY\_INV}, ventana $21$, $C=9$) en lugar de Otsu global, que fusionaba toda
+la placa en un solo blob bajo iluminaci\'on irregular o \emph{blur}. Luego:
+\begin{enumerate}[nosep]
+  \item apertura morfol\'ogica para quitar ruido sin unir caracteres;
+  \item componentes conexos $\rightarrow$ cajas candidatas;
+  \item filtrado por altura ($\geq 0{,}25H$), relaci\'on de aspecto ($0{,}10$--$1{,}3$)
+        y \'area m\'inima;
+  \item filtrado de \emph{outliers} por la mediana de alturas (elimina la caja del
+        marco de la placa);
+  \item ordenamiento por la coordenada $x$ (izquierda $\rightarrow$ derecha).
+\end{enumerate}
+Cada caja se recorta de la imagen \emph{en gris} (no binarizada), que es el dominio con
+el que se entren\'o el clasificador.
+
+\subsection{Clasificaci\'on}
+Todos los recortes de car\'acter se clasifican en un \textbf{\'unico \emph{batch}} en
+GPU. Para cada posici\'on se obtiene la distribuci\'on softmax $p^{(i)}$.
+
+\subsection{Decodificaci\'on posicional}
+\label{sec:posicional}
+La placa ecuatoriana tiene formato \texttt{ABC-NNNN}: las primeras \textbf{tres
+posiciones son letras} y el resto \textbf{d\'igitos}. Restringir el \emph{argmax} de
+cada posici\'on a su grupo elimina las confusiones cruzadas
+($O\!\leftrightarrow\!0$, $I\!\leftrightarrow\!1$, $Z\!\leftrightarrow\!2$,
+$B\!\leftrightarrow\!8$, $S\!\leftrightarrow\!5$):
+\begin{equation}
+c_i =
+\begin{cases}
+\displaystyle\arg\max_{k\in\mathcal{L}} p^{(i)}_k & i < 3 \quad (\text{letras } \mathcal{L})\\[6pt]
+\displaystyle\arg\max_{k\in\mathcal{D}} p^{(i)}_k & i \geq 3 \quad (\text{d\'igitos } \mathcal{D})
+\end{cases}
+\end{equation}
+Solo se aplica cuando hay 6 o 7 caracteres segmentados. Finalmente, una expresi\'on
+regular valida el formato \texttt{[A-Z]\{3\}-\textbackslash d\{3,4\}}.
+
+% ================================================================
+\section{Votaci\'on temporal (¿por qu\'e?)}
+% ================================================================
+En un sistema en tiempo real la \textbf{misma placa aparece en decenas de fotogramas}.
+Un solo fotograma alcanza $\sim$93\,\% de exactitud por car\'acter, es decir
+$\approx 1$ car\'acter err\'oneo por blur o \'angulo, lo que da una placa
+\emph{completa} incorrecta. Los errores por fotograma son en gran parte
+\textbf{aleatorios}, as\'i que combinarlos los cancela.
+
+La clase \texttt{VotadorPlaca} acumula las lecturas v\'alidas (con confianza
+$\geq 0{,}45$) y decide por \textbf{mayor\'ia posici\'on a posici\'on} sobre la
+longitud m\'as frecuente:
+\begin{equation}
+\widehat{c}_i = \operatorname{moda}\big(\, c_i^{(1)}, c_i^{(2)}, \ldots, c_i^{(T)} \,\big),
+\end{equation}
+donde $c_i^{(t)}$ es el car\'acter le\'ido en la posici\'on $i$ del fotograma $t$. Se
+exige un m\'inimo de votos (por defecto 4) antes de aceptar el consenso.
+
+\paragraph{Ejemplo real.} Para la placa \texttt{PDK-7282}, fotogramas sueltos dieron
+\texttt{HDK-7282}, \texttt{HLK-7282}, \texttt{PLK-7282}\ldots; la votaci\'on por
+posici\'on recupera el \textbf{consenso correcto \texttt{PDK-7282}}. Sin votaci\'on,
+el sistema aceptar\'ia el primer fotograma, que puede estar equivocado.
+
+% ================================================================
+\section{Velocidad y l\'ogica difusa}
+% ================================================================
+La velocidad se estima con dos l\'ineas virtuales separadas una distancia conocida
+$d$. Si el veh\'iculo cruza A en $t_A$ y B en $t_B$:
+\begin{equation}
+v\,[\text{km/h}] = \frac{d}{t_B - t_A}\times 3{,}6 .
+\end{equation}
+
+El sistema difuso (\texttt{scikit-fuzzy}) clasifica la velocidad y calcula la sanci\'on
+en \textbf{horas de indisponibilidad del veh\'iculo}. Pol\'itica del proyecto:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Velocidad (km/h) & Clasificaci\'on & Sanci\'on \\
+\midrule
+$0$--$10$  & Felicitaci\'on & $0$ h \\
+$10$--$20$ & Normal         & $0$ h (advertencia) \\
+$>20$      & Multa          & $X$ h (escala con el exceso) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Conjuntos difusos de entrada (\emph{velocidad}): \emph{felicitacion} (trapezoidal
+$[0,0,8,11]$), \emph{normal} (triangular $[9,15,21]$), \emph{multa\_leve} (triangular
+$[19,24,30]$) y \emph{multa\_grave} (trapezoidal $[28,34,40,40]$). La salida
+\emph{horas} se defuzzifica por centroide; \emph{multa\_leve} mapea a horas moderadas
+y \emph{multa\_grave} a horas altas, de modo que la sanci\'on crece con el exceso
+(p.\,ej.\ $22$ km/h $\rightarrow 16$ h; $35$ km/h $\rightarrow 39$ h).
+
+% ================================================================
+\section{Registro de eventos (JSON)}
+% ================================================================
+Se elimin\'o PostgreSQL. Cada evento relevante se agrega a
+\texttt{registros/eventos.json} junto con la captura del fotograma
+(\texttt{capturas/}). Ejemplo:
+
+\begin{lstlisting}
+{
+  "timestamp": "2026-06-03T15:34:51",
+  "placa": "PDK-7282",
+  "velocidad_kmh": 27.0,
+  "clasificacion": "multa",
+  "horas_indisponibilidad": 16,
+  "ruta_captura": "capturas/PDK7282_20260603_153451.jpg"
+}
+\end{lstlisting}
+
+% ================================================================
+\section{Resultados experimentales}
+% ================================================================
+Se evalu\'o la votaci\'on temporal sobre los videos disponibles. Los videos
+\texttt{carros1}--\texttt{carros6} corresponden al mismo veh\'iculo, cuya placa real
+(verificada con un fotograma n\'itido) es \texttt{PDK-7282}.
+
+\begin{center}
+\begin{tabular}{llcc}
+\toprule
+Video & Consenso & Placa real & D\'igitos \\
+\midrule
+carros1  & PBK-7282 & PDK-7282 & \checkmark \\
+carros2  & PDW-2225 & (otro veh\'iculo) & --- \\
+carros3  & \textbf{PDK-7282} & PDK-7282 & \checkmark \\
+carros4  & PLK-7282 & PDK-7282 & \checkmark \\
+carros5  & PLK-7282 & PDK-7282 & \checkmark \\
+carros6  & PLK-7282 & PDK-7282 & \checkmark \\
+carros7--11 & varios & (pocas lecturas) & parcial \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{An\'alisis.} Los \textbf{d\'igitos se reconocen al 100\,\%}. El punto d\'ebil
+es la \textbf{letra central} ($D$), que el modelo confunde con $L$ o $B$ bajo
+\emph{blur}: las letras se predicen con baja confianza (p.\,ej.\ $D=0{,}29$,
+$P=0{,}17$) porque el conjunto tiene menos muestras de letras y m\'as ruido. La
+votaci\'on acierta cuando la lectura correcta domina (carros3), pero falla cuando el
+sesgo $D\!\rightarrow\!L$ es sistem\'atico en ese clip.
+
+% ================================================================
+\section{Limitaciones y trabajo futuro}
+% ================================================================
+\begin{itemize}[nosep]
+  \item \textbf{Letras poco confiables.} Reentrenar con \emph{muestreo balanceado por
+        clase} (\texttt{WeightedRandomSampler}) y mayor resoluci\'on ($64$ px) para
+        elevar la confianza de las letras.
+  \item \textbf{Ruido del dataset.} Auto-descartar recortes de baja confianza del
+        propio modelo antes de reentrenar.
+  \item \textbf{Ambig\"uedad intr\'inseca} $O/0$, $I/1$: ya mitigada por la
+        decodificaci\'on posicional.
+  \item \textbf{Segmentaci\'on} sensible a placas muy inclinadas; podr\'ia
+        rectificarse la perspectiva antes de segmentar.
+\end{itemize}
+
+% ================================================================
+\section{C\'omo ejecutar}
+% ================================================================
+\begin{lstlisting}
+# Entrenar el clasificador de caracteres (datos reales)
+.venv/bin/python cnn/entrenar_ocr_real.py
+
+# Leer una placa de una imagen
+.venv/bin/python cnn/inferencia.py <imagen>
+
+# Pipeline completo sobre un video (ventana GUI)
+.venv/bin/python main.py video videos/carros3.mp4
+
+# Probar la logica difusa
+.venv/bin/python velocidad/logica_difusa.py
+\end{lstlisting}
+
+\end{document}
