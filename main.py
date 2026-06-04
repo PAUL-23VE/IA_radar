@@ -155,26 +155,64 @@ class VotadorPlaca:
 
 
 # ----------------------------------------------------------------
-#  Mouse callback — arrastrar líneas de velocidad
+#  Líneas de velocidad con endpoints libremente arrastrables
 # ----------------------------------------------------------------
 
+R_ENDPOINT = 12   # radio de agarre de un endpoint (px)
+R_LINEA    = 10   # distancia máxima al segmento para agarrar la línea entera
+
+
+def _dist_punto_segmento(px, py, x1, y1, x2, y2) -> float:
+    """Distancia del punto (px,py) al segmento (x1,y1)-(x2,y2)."""
+    dx, dy = x2 - x1, y2 - y1
+    if dx == dy == 0:
+        return ((px - x1) ** 2 + (py - y1) ** 2) ** 0.5
+    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
+    return ((px - x1 - t * dx) ** 2 + (py - y1 - t * dy) ** 2) ** 0.5
+
+
+def _lado_linea(px, py, x1, y1, x2, y2) -> float:
+    """Signo del producto cruzado: positivo/negativo según el lado de la línea."""
+    return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+
+
 def _callback_mouse(event, x, y, flags, param):
-    """Permite arrastrar Línea A y Línea B verticalmente con click+drag."""
-    st    = param          # dict compartido con el loop principal
-    UMBRAL = 18            # px de margen para "agarrar" una línea
+    """
+    Click+drag sobre un endpoint (círculo) → mueve solo ese punto.
+    Click+drag sobre el cuerpo de la línea → desplaza toda la línea.
+    Sin restricciones de posición: las líneas van a donde el usuario quiera.
+    """
+    st = param   # dict con linea_a, linea_b, drag
 
     if event == cv2.EVENT_LBUTTONDOWN:
-        if abs(y - st["a_y"]) <= UMBRAL:
-            st["drag"] = "A"
-        elif abs(y - st["b_y"]) <= UMBRAL:
-            st["drag"] = "B"
+        st["drag"] = None
+        for nombre in ("a", "b"):
+            ln = st[f"linea_{nombre}"]
+            # ¿click cerca de endpoint 1?
+            if ((x - ln["x1"]) ** 2 + (y - ln["y1"]) ** 2) ** 0.5 <= R_ENDPOINT:
+                st["drag"] = (nombre, "p1"); break
+            # ¿click cerca de endpoint 2?
+            if ((x - ln["x2"]) ** 2 + (y - ln["y2"]) ** 2) ** 0.5 <= R_ENDPOINT:
+                st["drag"] = (nombre, "p2"); break
+            # ¿click cerca del cuerpo de la línea?
+            if _dist_punto_segmento(x, y, ln["x1"], ln["y1"], ln["x2"], ln["y2"]) <= R_LINEA:
+                st["drag"] = (nombre, "linea")
+                st["drag_ox"] = x; st["drag_oy"] = y
+                st["drag_lx1"] = ln["x1"]; st["drag_ly1"] = ln["y1"]
+                st["drag_lx2"] = ln["x2"]; st["drag_ly2"] = ln["y2"]
+                break
 
-    elif event == cv2.EVENT_MOUSEMOVE:
-        if st["drag"] == "A":
-            # Línea A no puede superar a Línea B (mínimo 40px de separación)
-            st["a_y"] = max(10, min(y, st["b_y"] - 40))
-        elif st["drag"] == "B":
-            st["b_y"] = min(st["alto"] - 10, max(y, st["a_y"] + 40))
+    elif event == cv2.EVENT_MOUSEMOVE and st["drag"]:
+        nombre, parte = st["drag"]
+        ln = st[f"linea_{nombre}"]
+        if parte == "p1":
+            ln["x1"], ln["y1"] = x, y
+        elif parte == "p2":
+            ln["x2"], ln["y2"] = x, y
+        else:  # mover línea completa
+            dx = x - st["drag_ox"]; dy = y - st["drag_oy"]
+            ln["x1"] = st["drag_lx1"] + dx; ln["y1"] = st["drag_ly1"] + dy
+            ln["x2"] = st["drag_lx2"] + dx; ln["y2"] = st["drag_ly2"] + dy
 
     elif event == cv2.EVENT_LBUTTONUP:
         st["drag"] = None
@@ -274,11 +312,13 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
     fps_video   = cap.get(cv2.CAP_PROP_FPS) or 30
     delay_ms    = max(1, int(1000 / fps_video)) if es_archivo else 1
 
-    # Estado compartido para el callback del mouse
+    # Líneas con endpoints libremente arrastrables (sin restricciones de posición).
+    # Inicialmente horizontales; el usuario arrastra endpoints o el cuerpo completo.
     estado_lineas = {
-        "a_y":  int(alto * 0.30),
-        "b_y":  int(alto * 0.70),
-        "alto": alto,
+        "linea_a": {"x1": 0,     "y1": int(alto * 0.30),
+                    "x2": ancho, "y2": int(alto * 0.30)},
+        "linea_b": {"x1": 0,     "y1": int(alto * 0.70),
+                    "x2": ancho, "y2": int(alto * 0.70)},
         "drag": None,
     }
 
@@ -314,9 +354,9 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
             if not ret:
                 break
 
-            # Leer posiciones actuales de las líneas (actualizadas por el mouse)
-            linea_a_y = estado_lineas["a_y"]
-            linea_b_y = estado_lineas["b_y"]
+            # Leer geometría actual de las líneas (actualizada por el mouse)
+            la = estado_lineas["linea_a"]
+            lb = estado_lineas["linea_b"]
 
             frame_display = frame.copy()
 
@@ -329,33 +369,48 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                 mask_clean   = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
                 contornos, _ = cv2.findContours(mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-                vehiculo_y = None
+                # Tomar el contorno más grande como vehículo principal
+                veh_cx = veh_cy = None
+                mejor_area = 0
                 for cnt in contornos:
-                    if cv2.contourArea(cnt) > 3000:
-                        x, y, w, h = cv2.boundingRect(cnt)
-                        vehiculo_y = y + h
-                        cv2.rectangle(frame_display, (x, y), (x + w, y + h), (0, 255, 255), 2)
-                        break
+                    area = cv2.contourArea(cnt)
+                    if area > 1500 and area > mejor_area:
+                        bx, by, bw, bh = cv2.boundingRect(cnt)
+                        veh_cx = bx + bw // 2   # centro horizontal
+                        veh_cy = by + bh         # borde inferior
+                        mejor_area = area
+                        cv2.rectangle(frame_display, (bx, by), (bx + bw, by + bh), (0, 255, 255), 2)
 
-                # Dibujar líneas (resaltadas si se arrastran)
-                color_a = (0, 140, 255) if estado_lineas["drag"] == "A" else (255, 100, 0)
-                color_b = (0, 140, 255) if estado_lineas["drag"] == "B" else (0, 0, 255)
-                cv2.line(frame_display, (0, linea_a_y), (ancho, linea_a_y), color_a, 2)
-                cv2.putText(frame_display, "Linea A  [arrastrar]", (10, linea_a_y - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, color_a, 2)
-                cv2.line(frame_display, (0, linea_b_y), (ancho, linea_b_y), color_b, 2)
-                cv2.putText(frame_display, "Linea B  [arrastrar]", (10, linea_b_y - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, color_b, 2)
+                # Dibujar líneas con endpoints visibles (círculos)
+                drag_nombre = estado_lineas["drag"][0] if estado_lineas["drag"] else None
+                for nombre, ln, color_base in [("a", la, (255, 100, 0)), ("b", lb, (0, 0, 255))]:
+                    color = (0, 180, 255) if drag_nombre == nombre else color_base
+                    p1 = (ln["x1"], ln["y1"]); p2 = (ln["x2"], ln["y2"])
+                    cv2.line(frame_display, p1, p2, color, 2)
+                    cv2.circle(frame_display, p1, R_ENDPOINT, color, -1)
+                    cv2.circle(frame_display, p2, R_ENDPOINT, color, -1)
+                    etiq = f"Linea {nombre.upper()}  [arrastrar]"
+                    cv2.putText(frame_display, etiq,
+                                (ln["x1"] + 8, ln["y1"] - 8),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 2)
                 cv2.putText(frame_display, "MIDIENDO VELOCIDAD…", (20, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
-                if vehiculo_y is not None:
-                    if not cruzó_linea_a and vehiculo_y > linea_a_y:
-                        # Para archivos: usar timestamp del frame (ms→s); para cámara: reloj real
+                if veh_cx is not None and veh_cy is not None:
+                    # Detección de cruce por cambio de signo del producto cruzado.
+                    # _lado_linea devuelve un valor cuyo signo indica a qué lado
+                    # de la línea se encuentra el punto; si cambia entre frames
+                    # el vehículo cruzó la línea.
+                    lado_a = _lado_linea(veh_cx, veh_cy,
+                                         la["x1"], la["y1"], la["x2"], la["y2"])
+                    lado_b = _lado_linea(veh_cx, veh_cy,
+                                         lb["x1"], lb["y1"], lb["x2"], lb["y2"])
+
+                    if not cruzó_linea_a and lado_a >= 0:
                         t_a = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
                         cruzó_linea_a = True
                         print("[Velocidad] Cruzó Línea A")
-                    if cruzó_linea_a and not cruzó_linea_b and vehiculo_y > linea_b_y:
+                    if cruzó_linea_a and not cruzó_linea_b and lado_b >= 0:
                         t_b = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
                         cruzó_linea_b = True
                         dt = t_b - t_a
@@ -447,6 +502,20 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                     etiqueta += f"  ({horas}h indisponible)"
                 cv2.putText(frame_display, f"ESTADO: {etiqueta}",
                             (20, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_d, 2)
+
+                # Auto-reset 3 s tras registro → listo para siguiente auto
+                t_ahora2 = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
+                if captura_guardada and t_ahora2 - t_b > 3.0:
+                    estado = ESTADO_VELOCIDAD
+                    cruzó_linea_a = cruzó_linea_b = False
+                    t_a = t_b = 0.0
+                    placa_detectada = ""
+                    evento_registrado = False
+                    captura_guardada  = False
+                    resultado_difuso  = None
+                    velocidad_kmh     = 0.0
+                    worker.reset_lecturas()
+                    print("[Sistema] Listo para siguiente vehículo…")
 
             # ─── HUD inferior ──────────────────────────────────────
             cv2.putText(frame_display, "F=fullscreen  R=reiniciar  ESC=salir",
