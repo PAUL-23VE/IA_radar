@@ -322,12 +322,12 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
         "drag": None,
     }
 
-    # Ventana redimensionable (compatible Linux/Windows)
+    # Ventana redimensionable; arranca en pantalla completa
     cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WIN_NAME, min(ancho, 1280), min(alto, 720))
+    cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     cv2.setMouseCallback(WIN_NAME, _callback_mouse, estado_lineas)
 
-    pantalla_completa = False
+    pantalla_completa = True
 
     estado           = ESTADO_VELOCIDAD
     fgbg             = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=True)
@@ -428,7 +428,15 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                 cv2.putText(frame_display, "BUSCANDO PLACA…",
                             (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
 
-                worker.submit(frame)
+                # Solo enviar al worker si hay movimiento real en el frame.
+                # Evita leer placas de vehículos estáticos o frames vacíos.
+                mascara_mov   = fgbg.apply(frame)
+                _, mov_bin    = cv2.threshold(mascara_mov, 200, 255, cv2.THRESH_BINARY)
+                pixeles_mov   = cv2.countNonZero(mov_bin)
+                hay_movimiento = pixeles_mov > 800   # umbral: ~0.1% de un frame 1080p
+
+                if hay_movimiento:
+                    worker.submit(frame)
 
                 # Acumular todas las lecturas nuevas para votación temporal
                 for p, bb, c in worker.drenar_lecturas():
