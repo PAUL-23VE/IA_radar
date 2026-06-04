@@ -266,6 +266,14 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
 
     alto, ancho = frame_init.shape[:2]
 
+    # Detectar si la fuente es un archivo de video (no cámara en vivo).
+    # Para archivos: usar los timestamps del propio video para calcular velocidad
+    # (time.time() mediría tiempo de CPU, no tiempo del video → velocidades imposibles).
+    # También limitar el display al FPS real del video para que no vaya rapidísimo.
+    es_archivo = isinstance(cam_url, str) and not cam_url.startswith("http")
+    fps_video   = cap.get(cv2.CAP_PROP_FPS) or 30
+    delay_ms    = max(1, int(1000 / fps_video)) if es_archivo else 1
+
     # Estado compartido para el callback del mouse
     estado_lineas = {
         "a_y":  int(alto * 0.30),
@@ -343,11 +351,12 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
 
                 if vehiculo_y is not None:
                     if not cruzó_linea_a and vehiculo_y > linea_a_y:
-                        t_a = time.time()
+                        # Para archivos: usar timestamp del frame (ms→s); para cámara: reloj real
+                        t_a = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
                         cruzó_linea_a = True
                         print("[Velocidad] Cruzó Línea A")
                     if cruzó_linea_a and not cruzó_linea_b and vehiculo_y > linea_b_y:
-                        t_b = time.time()
+                        t_b = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
                         cruzó_linea_b = True
                         dt = t_b - t_a
                         if dt > 0:
@@ -385,7 +394,9 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                     print(f"[Placa] Consenso ({votador.n} lecturas): {placa_detectada}")
                     votador.reset()
 
-                if t_b > 0 and time.time() - t_b > 5.0:
+                # Timeout: 5 s reales (cámara) ó 5 s de video (archivo)
+                t_ahora = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
+                if t_b > 0 and t_ahora - t_b > 5.0:
                     # Timeout: si hubo alguna lectura, usar la mejor disponible
                     fallback = votador.consenso() or (votador._lecturas[-1] if votador.n else "")
                     if fallback:
@@ -443,7 +454,8 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
 
             cv2.imshow(WIN_NAME, frame_display)
 
-            tecla = cv2.waitKey(1) & 0xFF
+            # Para archivos de video: respetar el FPS original (no reproducir a máxima velocidad)
+            tecla = cv2.waitKey(delay_ms) & 0xFF
             if tecla == 27:           # ESC
                 break
             elif tecla in (ord("f"), ord("F")):
