@@ -46,7 +46,7 @@ from modelo import crear_modelo_cnn  # noqa: E402
 torch.manual_seed(42)
 np.random.seed(42)
 
-DATASET     = ROOT / "Dataset_OCR_Placas"
+DATASET     = ROOT / "data" / "datasets" / "Dataset_OCR_Placas"
 RUTA_MODELO = ROOT / "models" / "ocr_char.pt"
 IMG_SIZE    = 48
 EPOCHS      = 35

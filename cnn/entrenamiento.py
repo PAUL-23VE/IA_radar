@@ -103,14 +103,15 @@ transform_test = transforms.Compose([
 def entrenar():
     print(f"Dispositivo: {device}")
     (ROOT / "models").mkdir(exist_ok=True)
+    data_dir = str(ROOT / "data" / "datasets")
 
     print("Cargando EMNIST Letters…")
-    emnist_train = EMNISTMappedDataset("./data", train=True,  transform=transform_train)
-    emnist_test  = EMNISTMappedDataset("./data", train=False, transform=transform_test)
+    emnist_train = EMNISTMappedDataset(data_dir, train=True,  transform=transform_train)
+    emnist_test  = EMNISTMappedDataset(data_dir, train=False, transform=transform_test)
 
     print("Cargando MNIST Dígitos…")
-    mnist_train = MNISTOffsetDataset("./data", train=True,  transform=transform_train)
-    mnist_test  = MNISTOffsetDataset("./data", train=False, transform=transform_test)
+    mnist_train = MNISTOffsetDataset(data_dir, train=True,  transform=transform_train)
+    mnist_test  = MNISTOffsetDataset(data_dir, train=False, transform=transform_test)
 
     train_ds = ConcatDataset([emnist_train, mnist_train])
     test_ds  = ConcatDataset([emnist_test,  mnist_test])

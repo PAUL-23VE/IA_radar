@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radar de Placas Inteligente</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        
+        <!-- Sidebar Dashboard -->
+        <aside class="dashboard glass-panel">
+            <div class="brand">
+                <div class="logo-dot"></div>
+                <h1>RADAR AI</h1>
+            </div>
+            
+            <div class="control-panel">
+                <h3>Configuración de Fuente</h3>
+                <div class="input-group">
+                    <label for="source-type">Tipo de Entrada</label>
+                    <select id="source-type">
+                        <option value="camera">Cámara Web (0)</option>
+                        <option value="video">Archivo de Video</option>
+                        <option value="stream">Stream Digital (URL)</option>
+                    </select>
+                </div>
+                
+                <div class="input-group" id="source-path-group" style="display: none;">
+                    <label for="source-path">Ruta / URL</label>
+                    <input type="text" id="source-path" placeholder="/ruta/al/video.mp4">
+                </div>
+                
+                <div class="actions">
+                    <button id="btn-start" class="btn primary">Iniciar Radar</button>
+                    <button id="btn-stop" class="btn danger" disabled>Detener</button>
+                </div>
+            </div>
+
+            <div class="status-panel">
+                <div class="status-indicator">
+                    <div class="status-dot" id="system-status-dot"></div>
+                    <span id="system-status-text">Sistema Detenido</span>
+                </div>
+            </div>
+            
+            <div class="live-metrics">
+                <div class="metric-card focus">
+                    <span class="label">VELOCIDAD</span>
+                    <div class="value-container">
+                        <span id="current-speed">0.0</span>
+                        <span class="unit">km/h</span>
+                    </div>
+                </div>
+                
+                <div class="metric-card status-normal" id="plate-card">
+                    <span class="label">ÚLTIMA PLACA</span>
+                    <div class="value-container">
+                        <span id="current-plate" class="mono">---</span>
+                    </div>
+                    <div class="status-tag" id="current-classification">ESPERANDO</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-view">
+            <header class="view-header glass-panel">
+                <h2>Visualización en Tiempo Real</h2>
+                <div class="hints">
+                    Arrastra los puntos naranjas y rojos para calibrar las líneas de medición de velocidad
+                </div>
+            </header>
+            
+            <div class="video-container glass-panel">
+                <!-- Capa de video MJPEG -->
+                <img id="video-stream" src="" alt="Video Feed" style="display: none;">
+                <!-- Capa interactiva de Canvas -->
+                <canvas id="overlay-canvas"></canvas>
+                <!-- Placeholder -->
+                <div id="video-placeholder">
+                    <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" stroke-width="1.5" fill="none">
+                        <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14v-4z" />
+                        <rect x="3" y="6" width="12" height="12" rx="2" ry="2" />
+                    </svg>
+                    <p>Inicia el radar para ver la cámara</p>
+                </div>
+            </div>
+            
+            <div class="recent-events glass-panel">
+                <h3>Últimos Eventos</h3>
+                <div class="events-list" id="events-list">
+                    <!-- Events will be populated here -->
+                </div>
+            </div>
+        </main>
+        
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

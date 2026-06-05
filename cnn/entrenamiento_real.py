@@ -36,7 +36,7 @@ torch.manual_seed(42)
 np.random.seed(42)
 
 RUTA_MODELO      = str(ROOT / "models" / "modelo_entrenado.pt")
-DATASET_REAL     = ROOT / "dataset_propio"
+DATASET_REAL     = ROOT / "data" / "datasets" / "dataset_propio"
 EPOCHS           = 20
 BATCH_SIZE       = 128
 # Porcentaje de imágenes EMNIST/MNIST a mezclar (0.0 = solo reales, 1.0 = 50/50)
@@ -156,7 +156,7 @@ def entrenar():
             print(f"  {c}: {conteo_clases[i]}")
 
     # ── Dataset sintético complementario ────────────────────────
-    data_dir = str(ROOT / "data")
+    data_dir = str(ROOT / "data" / "datasets")
     emnist_train = EMNISTMappedDataset(data_dir, train=True,  transform=aug_sintetico)
     emnist_test  = EMNISTMappedDataset(data_dir, train=False, transform=test_tf)
     mnist_train  = MNISTOffsetDataset(data_dir,  train=True,  transform=aug_sintetico)

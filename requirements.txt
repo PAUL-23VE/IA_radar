@@ -12,3 +12,9 @@ torchvision
 
 # Lógica difusa (sanción por velocidad)
 scikit-fuzzy
+
+# Backend y WebSockets
+fastapi
+uvicorn
+websockets
+python-multipart

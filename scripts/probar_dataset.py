@@ -142,11 +142,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Probar best.pt + EasyOCR contra imagenes locales."
     )
-    parser.add_argument("--dataset", default="dataset_combinado")
+    parser.add_argument("--dataset", default="data/datasets/dataset_combinado")
     parser.add_argument("--split", default="test", choices=["train", "valid", "test"])
     parser.add_argument("--images", help="Carpeta de imagenes; reemplaza --dataset/--split.")
     parser.add_argument("--limit", type=int, default=30)
-    parser.add_argument("--out", default="dev_outputs/dataset_ocr")
+    parser.add_argument("--out", default="outputs/dev_outputs/dataset_ocr")
     parser.add_argument(
         "--ground-truth",
         help="CSV con columnas archivo/nombre_archivo y placa_real.",

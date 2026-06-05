@@ -36,7 +36,8 @@ from modelo import crear_modelo_cnn  # noqa: E402
 #  Configuración
 # ----------------------------------------------------------------
 RUTA_YOLO = os.getenv("YOLO_MODEL_PATH", "best.pt")
-RUTA_CNN  = os.path.join(os.path.dirname(__file__), "..", "models", "ocr_char.pt")
+RUTA_CNN  = os.getenv("OCR_CNN_PATH",
+                      os.path.join(os.path.dirname(__file__), "..", "models", "ocr_char.pt"))
 CONF_PLACA = 0.15
 
 IMG_SIZE = 32  # tamaño de entrada del clasificador (se sobrescribe con el del checkpoint)
@@ -165,74 +166,145 @@ def _preparar_gris(recorte: np.ndarray) -> np.ndarray:
 #  3. Segmentación de caracteres
 # ----------------------------------------------------------------
 
+def _binarizar_texto(g: np.ndarray) -> np.ndarray:
+    """
+    Umbral ADAPTATIVO (local): texto (oscuro) → blanco. Local, no global, para
+    no confundirse con el cuerpo oscuro del auto alrededor de la placa (Otsu
+    global invertía la polaridad y dejaba el texto en negro).
+
+    Ajusta el blockSize a la altura del recorte para que cubra ~1 carácter.
+    """
+    h = g.shape[0]
+    bs = max(11, int(h * 0.6) | 1)        # impar, ~60% de la altura
+    binimg = cv2.adaptiveThreshold(
+        g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, 9,
+    )
+    # Polaridad: en una placa el texto es MINORÍA. Si el blanco domina el centro,
+    # la placa es de texto claro / fondo oscuro → invertir.
+    cy0, cy1 = int(h * 0.3), int(h * 0.7)
+    centro = binimg[cy0:cy1]
+    if centro.size and np.count_nonzero(centro) > centro.size * 0.5:
+        binimg = cv2.bitwise_not(binimg)
+    return binimg
+
+
+def _cajas_caracter(binimg: np.ndarray, H: int, W: int) -> list[tuple]:
+    """Componentes conexos filtrados a candidatos de carácter (x,y,w,h)."""
+    n, _, stats, _ = cv2.connectedComponentsWithStats(binimg, connectivity=8)
+    cajas = []
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        if h < 0.30 * H or h > 0.97 * H:
+            continue
+        rel = w / h
+        if rel < 0.08 or rel > 1.4:
+            continue
+        if area < 0.006 * H * W:
+            continue
+        cajas.append((x, y, w, h))
+    return cajas
+
+
+def _aislar_banda(gris: np.ndarray) -> np.ndarray:
+    """
+    Aísla la banda de la fila principal de caracteres (ABC-1234), descartando
+    el encabezado 'ECUADOR', el logo ANT, tornillos y marco.
+
+    Idea: los caracteres principales forman el grupo de componentes MÁS ALTOS y
+    alineados verticalmente. El encabezado es más pequeño; el logo/tornillos
+    quedan fuera de ese clúster de altura. Recortamos al rango vertical de ese
+    clúster con un pequeño margen.
+    """
+    h0, w0 = gris.shape[:2]
+    binimg = _binarizar_texto(gris)
+    cajas = _cajas_caracter(binimg, h0, w0)
+    if len(cajas) < 2:
+        return gris
+
+    alturas = np.array([c[3] for c in cajas], dtype=np.float32)
+    h_med = float(np.median(alturas))
+    # Caracteres principales: altura cercana a la mediana de los más altos
+    grandes = [c for c in cajas if c[3] >= 0.7 * h_med]
+    if len(grandes) < 2:
+        grandes = cajas
+    ys = [c[1] for c in grandes]
+    ye = [c[1] + c[3] for c in grandes]
+    y0 = max(0, int(np.median(ys) - 0.18 * h_med))
+    y1 = min(h0, int(np.median(ye) + 0.18 * h_med))
+    if y1 - y0 < 0.3 * h0:                 # banda implausible → usar todo
+        return gris
+    return gris[y0:y1]
+
+
 def _segmentar_caracteres(gris: np.ndarray) -> list[np.ndarray]:
     """
-    Segmenta los caracteres de un recorte de placa en escala de grises.
+    Segmenta los caracteres de la fila principal de una placa.
 
-    Estrategia:
-      - reescala a altura fija (mejor estabilidad de los umbrales)
-      - binariza con Otsu, asegurando que el texto sea blanco (minoría)
-      - componentes conexos filtrados por alto/aspecto/área
-      - ordena por X y devuelve los recortes EN GRIS (no binarios), que es
-        el dominio con el que se entrenó el clasificador.
+    Pipeline:
+      1. aísla la banda de caracteres (sin encabezado ECUADOR / logo / tornillos)
+      2. reescala a altura fija
+      3. binariza (Otsu inverso) + componentes conexos
+      4. filtra por altura/aspecto/área y clúster de altura (mediana)
+      5. parte componentes fusionados (chars pegados) por ancho mediano
+      6. devuelve recortes EN GRIS, ordenados izquierda → derecha
 
     Returns:
-        lista de recortes en gris (uint8), ordenados de izquierda a derecha.
+        lista de recortes en gris (uint8).
     """
+    banda = _aislar_banda(gris)
+
     H_OBJ = 64
-    h0, w0 = gris.shape[:2]
+    h0, w0 = banda.shape[:2]
     if h0 == 0 or w0 == 0:
         return []
     escala = H_OBJ / h0
-    g = cv2.resize(gris, (max(1, int(w0 * escala)), H_OBJ), interpolation=cv2.INTER_LINEAR)
+    g = cv2.resize(banda, (max(1, int(w0 * escala)), H_OBJ), interpolation=cv2.INTER_LINEAR)
     H, W = g.shape
 
-    # Umbral ADAPTATIVO: separa caracteres bajo iluminación irregular y blur,
-    # donde Otsu global fusionaba toda la placa en un solo blob. Texto oscuro
-    # sobre fondo claro → foreground (texto) BLANCO.
-    binimg = cv2.adaptiveThreshold(
-        g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 9,
-    )
-    if np.count_nonzero(binimg) > binimg.size * 0.5:   # placa con texto claro/fondo oscuro
-        binimg = cv2.bitwise_not(binimg)
-
-    # Despeckle (quita ruido sal/pimienta sin unir caracteres adyacentes)
+    binimg = _binarizar_texto(g)
     binimg = cv2.morphologyEx(
         binimg, cv2.MORPH_OPEN,
         cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)),
     )
 
-    n, _, stats, _ = cv2.connectedComponentsWithStats(binimg, connectivity=8)
-
-    cajas = []
-    for i in range(1, n):  # 0 = fondo
-        x, y, w, h, area = stats[i]
-        # Altura típica de carácter (el recorte de YOLO suele traer margen, por
-        # eso el umbral inferior es bajo; los outliers se filtran luego por mediana)
-        if h < 0.25 * H or h > 0.95 * H:
-            continue
-        rel = w / h
-        if rel < 0.10 or rel > 1.3:           # descartar barras/ruido y bloques anchos
-            continue
-        if area < 0.008 * H * W:
-            continue
-        cajas.append((x, y, w, h))
-
+    cajas = _cajas_caracter(binimg, H, W)
     if not cajas:
         return []
 
-    # Filtrar outliers de altura respecto a la mediana (ruido, marcos)
-    alturas = np.array([c[3] for c in cajas], dtype=np.float32)
-    h_med   = float(np.median(alturas))
-    cajas   = [c for c in cajas if 0.6 * h_med <= c[3] <= 1.4 * h_med]
-    cajas.sort(key=lambda c: c[0])  # orden izquierda → derecha
+    # Clúster de altura + centro vertical: los caracteres de la fila principal
+    # comparten altura y línea base. El logo ANT, el encabezado ECUADOR residual
+    # y el ruido tienen otra altura o están desplazados verticalmente → fuera.
+    h_med = float(np.median([c[3] for c in cajas]))
+    cy_med = float(np.median([c[1] + c[3] / 2 for c in cajas]))
+    cajas = [c for c in cajas
+             if 0.72 * h_med <= c[3] <= 1.3 * h_med
+             and abs((c[1] + c[3] / 2) - cy_med) <= 0.28 * h_med]
+    if not cajas:
+        return []
+    cajas.sort(key=lambda c: c[0])
+
+    # Partir componentes fusionados (dos chars pegados → 1 caja ancha)
+    anchos = sorted(c[2] for c in cajas)
+    w_med = anchos[len(anchos) // 2]
+    partidas = []
+    for x, y, w, h in cajas:
+        k = int(round(w / w_med)) if w_med > 0 else 1
+        if k >= 2 and w > 1.5 * w_med:        # caja anormalmente ancha → dividir
+            paso = w // k
+            for j in range(k):
+                partidas.append((x + j * paso, y, paso, h))
+        else:
+            partidas.append((x, y, w, h))
+    cajas = partidas
 
     recortes = []
     for x, y, w, h in cajas:
-        m = max(1, int(0.12 * h))             # padding alrededor del carácter
+        m = max(1, int(0.12 * h))
         y1 = max(0, y - m); y2 = min(H, y + h + m)
         x1 = max(0, x - m); x2 = min(W, x + w + m)
-        recortes.append(g[y1:y2, x1:x2])
+        rc = g[y1:y2, x1:x2]
+        if rc.size:
+            recortes.append(rc)
     return recortes
 
 
@@ -272,29 +344,48 @@ def _indices_grupos() -> tuple[list[int], list[int]]:
     return letras, digitos
 
 
-def _decodificar_posicional(probs: np.ndarray) -> tuple[str, float]:
-    """
-    Decodifica explotando el formato ecuatoriano ABC-NNNN: las primeras 3
-    posiciones son letras y las restantes dígitos. Restringir cada carácter a
-    su grupo elimina las confusiones cruzadas O↔0, I↔1, Z↔2, B↔8, S↔5
-    (las más frecuentes), aumentando mucho la precisión a nivel de placa.
-
-    Solo aplica cuando hay 6 o 7 caracteres segmentados (placa EC válida).
-    Retorna ("", 0.0) si no aplica.
-    """
-    n = probs.shape[0]
-    if n not in (6, 7):
-        return "", 0.0
-
+def _decodificar_ventana(probs: np.ndarray, ini: int, largo: int) -> tuple[str, float]:
+    """Decodifica probs[ini:ini+largo] con el patrón EC: 3 letras + dígitos."""
     letras, digitos = _indices_grupos()
     chars, confs = [], []
-    for i in range(n):
-        grupo = letras if i < 3 else digitos
-        j     = grupo[int(np.argmax(probs[i, grupo]))]
+    for k in range(largo):
+        grupo = letras if k < 3 else digitos
+        j = grupo[int(np.argmax(probs[ini + k, grupo]))]
         chars.append(_classes[j])
-        confs.append(float(probs[i, j]))
-
+        confs.append(float(probs[ini + k, j]))
     return "".join(chars), float(np.mean(confs))
+
+
+def _decodificar_posicional(probs: np.ndarray) -> tuple[str, float]:
+    """
+    Decodifica explotando el formato ecuatoriano ABC-NNNN: 3 letras + 3-4
+    dígitos. Restringir cada carácter a su grupo elimina las confusiones
+    cruzadas O↔0, I↔1, Z↔2, B↔8, S↔5.
+
+    Robusto a sobre-segmentación: si hay MÁS de 7 cajas (logo ANT, guion o ruido
+    colados), desliza una ventana de 7 y luego de 6 sobre las cajas y elige la
+    de mayor confianza media bajo el patrón EC. Así descarta los extras de los
+    bordes sin depender de una segmentación perfecta.
+    """
+    n = probs.shape[0]
+    if n < 6:
+        return "", 0.0
+
+    # Preferir la ventana MÁS LARGA aceptable (7 antes que 6): una placa EC suele
+    # tener 7 caracteres; permitir ventanas de 6 cuando hay un 7-window válido
+    # truncaba placas buenas (GTC-8918 → "TCB-918"). Solo se cae a 6 si ningún
+    # 7-window alcanza confianza mínima (placas 3+3 reales o segmentación pobre).
+    for largo in (7, 6):
+        if n < largo:
+            continue
+        mejor_txt, mejor_conf = "", 0.0
+        for ini in range(0, n - largo + 1):
+            txt, conf = _decodificar_ventana(probs, ini, largo)
+            if conf > mejor_conf:
+                mejor_txt, mejor_conf = txt, conf
+        if mejor_conf >= CONF_CNN_MIN:
+            return mejor_txt, mejor_conf
+    return mejor_txt, mejor_conf
 
 
 def _decodificar_plano(probs: np.ndarray) -> tuple[str, float]:

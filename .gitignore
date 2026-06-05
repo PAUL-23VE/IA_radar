@@ -10,20 +10,13 @@ __pycache__/
 .claude/
 
 # Salidas generadas en ejecución
-capturas/
-registros/
+outputs/
 output_test/
 resultado.jpg
-dev_outputs/
 runs/
 
-# Datasets (grandes, no versionar)
+# Datasets y videos (grandes, no versionar)
 data/
-Dataset_OCR_Placas/
-dataset_propio/
-
-# Videos de prueba
-videos/
 
 # Modelos descargados por ultralytics
 yolov8n.pt

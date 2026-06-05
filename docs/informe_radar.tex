@@ -80,7 +80,7 @@ sanci\'on. El reconocimiento de placa corre en un \textbf{hilo separado}
 \section{Datos de entrenamiento}
 % ================================================================
 \textbf{Importante:} el modelo de OCR se entrena con \emph{caracteres sueltos}, no con
-placas completas ni con los videos de prueba. Los videos (\texttt{videos/carros*.mp4})
+placas completas ni con los videos de prueba. Los videos (\texttt{data/videos/carros*.mp4})
 se usan \textbf{\'unicamente para evaluar}.
 
 El conjunto \texttt{Dataset\_OCR\_Placas/} contiene caracteres reales ya segmentados
@@ -299,8 +299,8 @@ y \emph{multa\_grave} a horas altas, de modo que la sanci\'on crece con el exces
 \section{Registro de eventos (JSON)}
 % ================================================================
 Se elimin\'o PostgreSQL. Cada evento relevante se agrega a
-\texttt{registros/eventos.json} junto con la captura del fotograma
-(\texttt{capturas/}). Ejemplo:
+\texttt{outputs/registros/eventos.json} junto con la captura del fotograma
+(\texttt{outputs/capturas/}). Ejemplo:
 
 \begin{lstlisting}
 {
@@ -309,7 +309,7 @@ Se elimin\'o PostgreSQL. Cada evento relevante se agrega a
   "velocidad_kmh": 27.0,
   "clasificacion": "multa",
   "horas_indisponibilidad": 16,
-  "ruta_captura": "capturas/PDK7282_20260603_153451.jpg"
+  "ruta_captura": "outputs/capturas/PDK7282_20260603_153451.jpg"
 }
 \end{lstlisting}
 
@@ -369,7 +369,7 @@ sesgo $D\!\rightarrow\!L$ es sistem\'atico en ese clip.
 .venv/bin/python cnn/inferencia.py <imagen>
 
 # Pipeline completo sobre un video (ventana GUI)
-.venv/bin/python main.py video videos/carros3.mp4
+.venv/bin/python main.py video data/videos/carros3.mp4
 
 # Probar la logica difusa
 .venv/bin/python velocidad/logica_difusa.py

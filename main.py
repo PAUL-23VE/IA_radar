@@ -6,7 +6,7 @@ Flujo:
   1. Captura frame desde la fuente seleccionada — hilo principal
   2. Hilo de reconocimiento (RecognitionWorker): YOLO + CNN de caracteres
   3. Mide velocidad con dos líneas virtuales + lógica difusa (sanción en horas)
-  4. Registra el evento (placa, velocidad, multa, captura) en registros/eventos.json
+  4. Registra el evento (placa, velocidad, multa, captura) en outputs/registros/eventos.json
 
 Modos de ejecución:
   python main.py demo                      # sin cámara, datos ficticios
@@ -23,10 +23,8 @@ Controles en ventana:
   ESC      → salir
 """
 
-import queue
 import sys
 import os
-import threading
 import time
 from datetime import datetime
 
@@ -41,6 +39,8 @@ from inferencia    import reconocer_placa
 from logica_difusa import clasificar_velocidad
 from registro      import registrar_evento
 from camara        import URL_STREAM
+from reconocedor   import RecognitionWorker, VotadorPlaca
+from geometria     import R_ENDPOINT, lado_linea, callback_mouse_lineas
 
 DISTANCIA_REFERENCIA_METROS = 5.0
 
@@ -49,173 +49,10 @@ ESTADO_PLACA     = 1
 ESTADO_REGISTRO  = 2
 
 WIN_NAME     = "Sistema Integrado de Placas"
-DIR_CAPTURAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "capturas")
+DIR_CAPTURAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs", "capturas")
 
 
-# ----------------------------------------------------------------
-#  Hilo de reconocimiento de placas (no bloquea el loop principal)
-# ----------------------------------------------------------------
 
-class RecognitionWorker(threading.Thread):
-    """
-    Procesa frames en un hilo separado para no bloquear la captura.
-    Solo mantiene el frame más reciente en la cola (descarta frames viejos).
-    Cada lectura completada se acumula para que el loop principal pueda votarlas.
-    """
-
-    def __init__(self):
-        super().__init__(daemon=True)
-        self._inbox   = queue.Queue(maxsize=1)
-        self._result  = ("", None, 0.0)   # última lectura (para el bbox/HUD)
-        self._pendientes = []             # lecturas nuevas no consumidas
-        self._lock    = threading.Lock()
-        self._active  = True
-
-    def submit(self, frame: np.ndarray) -> None:
-        try:
-            self._inbox.get_nowait()
-        except queue.Empty:
-            pass
-        try:
-            self._inbox.put_nowait(frame.copy())
-        except queue.Full:
-            pass
-
-    def get_result(self) -> tuple[str, tuple | None, float]:
-        with self._lock:
-            return self._result
-
-    def drenar_lecturas(self) -> list[tuple[str, tuple | None, float]]:
-        """Devuelve y limpia las lecturas nuevas desde la última llamada."""
-        with self._lock:
-            nuevas, self._pendientes = self._pendientes, []
-            return nuevas
-
-    def reset_lecturas(self) -> None:
-        with self._lock:
-            self._pendientes = []
-            self._result = ("", None, 0.0)
-
-    def stop(self) -> None:
-        self._active = False
-
-    def run(self) -> None:
-        while self._active:
-            try:
-                frame = self._inbox.get(timeout=0.1)
-                placa, bbox, conf = reconocer_placa(frame)
-                with self._lock:
-                    self._result = (placa, bbox, conf)
-                    self._pendientes.append((placa, bbox, conf))
-            except queue.Empty:
-                continue
-
-
-# ----------------------------------------------------------------
-#  Votación temporal de placas (multi-frame)
-# ----------------------------------------------------------------
-
-class VotadorPlaca:
-    """
-    Acumula lecturas válidas de varios fotogramas y produce un consenso por
-    votación posición-a-posición. En un sistema en tiempo real la misma placa
-    se ve en muchos frames; votar entre ellos corrige los errores de un solo
-    frame (blur, ángulo) y lleva la precisión cerca del 100%.
-    """
-
-    def __init__(self, min_votos: int = 4, conf_min: float = 0.45):
-        self.min_votos = min_votos
-        self.conf_min  = conf_min
-        self._lecturas: list[str] = []
-
-    def agregar(self, placa: str, conf: float) -> None:
-        if placa and conf >= self.conf_min:
-            self._lecturas.append(placa)
-
-    @property
-    def n(self) -> int:
-        return len(self._lecturas)
-
-    def consenso(self) -> str:
-        """Consenso si hay suficientes votos; '' en caso contrario."""
-        from collections import Counter
-        if len(self._lecturas) < self.min_votos:
-            return ""
-        # Agrupar por longitud (ABC-NNN vs ABC-NNNN) y usar la más frecuente
-        longitud = Counter(len(p) for p in self._lecturas).most_common(1)[0][0]
-        grupo    = [p for p in self._lecturas if len(p) == longitud]
-        # Mayoría por posición
-        return "".join(
-            Counter(p[i] for p in grupo).most_common(1)[0][0]
-            for i in range(longitud)
-        )
-
-    def reset(self) -> None:
-        self._lecturas = []
-
-
-# ----------------------------------------------------------------
-#  Líneas de velocidad con endpoints libremente arrastrables
-# ----------------------------------------------------------------
-
-R_ENDPOINT = 12   # radio de agarre de un endpoint (px)
-R_LINEA    = 10   # distancia máxima al segmento para agarrar la línea entera
-
-
-def _dist_punto_segmento(px, py, x1, y1, x2, y2) -> float:
-    """Distancia del punto (px,py) al segmento (x1,y1)-(x2,y2)."""
-    dx, dy = x2 - x1, y2 - y1
-    if dx == dy == 0:
-        return ((px - x1) ** 2 + (py - y1) ** 2) ** 0.5
-    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
-    return ((px - x1 - t * dx) ** 2 + (py - y1 - t * dy) ** 2) ** 0.5
-
-
-def _lado_linea(px, py, x1, y1, x2, y2) -> float:
-    """Signo del producto cruzado: positivo/negativo según el lado de la línea."""
-    return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
-
-
-def _callback_mouse(event, x, y, flags, param):
-    """
-    Click+drag sobre un endpoint (círculo) → mueve solo ese punto.
-    Click+drag sobre el cuerpo de la línea → desplaza toda la línea.
-    Sin restricciones de posición: las líneas van a donde el usuario quiera.
-    """
-    st = param   # dict con linea_a, linea_b, drag
-
-    if event == cv2.EVENT_LBUTTONDOWN:
-        st["drag"] = None
-        for nombre in ("a", "b"):
-            ln = st[f"linea_{nombre}"]
-            # ¿click cerca de endpoint 1?
-            if ((x - ln["x1"]) ** 2 + (y - ln["y1"]) ** 2) ** 0.5 <= R_ENDPOINT:
-                st["drag"] = (nombre, "p1"); break
-            # ¿click cerca de endpoint 2?
-            if ((x - ln["x2"]) ** 2 + (y - ln["y2"]) ** 2) ** 0.5 <= R_ENDPOINT:
-                st["drag"] = (nombre, "p2"); break
-            # ¿click cerca del cuerpo de la línea?
-            if _dist_punto_segmento(x, y, ln["x1"], ln["y1"], ln["x2"], ln["y2"]) <= R_LINEA:
-                st["drag"] = (nombre, "linea")
-                st["drag_ox"] = x; st["drag_oy"] = y
-                st["drag_lx1"] = ln["x1"]; st["drag_ly1"] = ln["y1"]
-                st["drag_lx2"] = ln["x2"]; st["drag_ly2"] = ln["y2"]
-                break
-
-    elif event == cv2.EVENT_MOUSEMOVE and st["drag"]:
-        nombre, parte = st["drag"]
-        ln = st[f"linea_{nombre}"]
-        if parte == "p1":
-            ln["x1"], ln["y1"] = x, y
-        elif parte == "p2":
-            ln["x2"], ln["y2"] = x, y
-        else:  # mover línea completa
-            dx = x - st["drag_ox"]; dy = y - st["drag_oy"]
-            ln["x1"] = st["drag_lx1"] + dx; ln["y1"] = st["drag_ly1"] + dy
-            ln["x2"] = st["drag_lx2"] + dx; ln["y2"] = st["drag_ly2"] + dy
-
-    elif event == cv2.EVENT_LBUTTONUP:
-        st["drag"] = None
 
 
 # ----------------------------------------------------------------
@@ -312,20 +149,20 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
     fps_video   = cap.get(cv2.CAP_PROP_FPS) or 30
     delay_ms    = max(1, int(1000 / fps_video)) if es_archivo else 1
 
-    # Líneas con endpoints libremente arrastrables (sin restricciones de posición).
-    # Inicialmente horizontales; el usuario arrastra endpoints o el cuerpo completo.
+    # Dos diagonales paralelas: vector idéntico (0.60W, -0.60H) → paralelas garantizadas.
+    # Van de esquina inferior-izquierda hacia superior-derecha, ~60% del ancho.
     estado_lineas = {
-        "linea_a": {"x1": 0,     "y1": int(alto * 0.30),
-                    "x2": ancho, "y2": int(alto * 0.30)},
-        "linea_b": {"x1": 0,     "y1": int(alto * 0.70),
-                    "x2": ancho, "y2": int(alto * 0.70)},
+        "linea_a": {"x1": int(ancho * 0.10), "y1": int(alto * 0.80),
+                    "x2": int(ancho * 0.70), "y2": int(alto * 0.20)},
+        "linea_b": {"x1": int(ancho * 0.25), "y1": int(alto * 0.90),
+                    "x2": int(ancho * 0.85), "y2": int(alto * 0.30)},
         "drag": None,
     }
 
     # Ventana redimensionable; arranca en pantalla completa
     cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
     cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-    cv2.setMouseCallback(WIN_NAME, _callback_mouse, estado_lineas)
+    cv2.setMouseCallback(WIN_NAME, callback_mouse_lineas, estado_lineas)
 
     pantalla_completa = True
 
@@ -334,6 +171,8 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
     t_a = t_b        = 0.0
     cruzó_linea_a    = False
     cruzó_linea_b    = False
+    prev_lado_a      = None   # lado previo respecto a línea A (para detectar cruce real)
+    prev_lado_b      = None   # lado previo respecto a línea B
     velocidad_kmh    = 0.0
     resultado_difuso = None
     placa_detectada  = ""
@@ -360,6 +199,18 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
 
             frame_display = frame.copy()
 
+            # ─── Líneas siempre visibles (todos los estados) ───────
+            drag_nombre = estado_lineas["drag"][0] if estado_lineas["drag"] else None
+            for nombre, ln, color_base in [("a", la, (255, 100, 0)), ("b", lb, (0, 0, 255))]:
+                color = (0, 180, 255) if drag_nombre == nombre else color_base
+                p1 = (ln["x1"], ln["y1"]); p2 = (ln["x2"], ln["y2"])
+                cv2.line(frame_display, p1, p2, color, 3)
+                cv2.circle(frame_display, p1, R_ENDPOINT, color, -1)
+                cv2.circle(frame_display, p2, R_ENDPOINT, color, -1)
+                cv2.putText(frame_display, f"Linea {nombre.upper()}",
+                            (ln["x1"] + 8, ln["y1"] - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 2)
+
             # ─── MÓDULO VELOCIDAD ──────────────────────────────────
             if estado == ESTADO_VELOCIDAD:
                 mascara      = fgbg.apply(frame)
@@ -374,51 +225,43 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                 mejor_area = 0
                 for cnt in contornos:
                     area = cv2.contourArea(cnt)
-                    if area > 1500 and area > mejor_area:
+                    if area > 2000 and area > mejor_area:
                         bx, by, bw, bh = cv2.boundingRect(cnt)
-                        veh_cx = bx + bw // 2   # centro horizontal
-                        veh_cy = by + bh         # borde inferior
+                        # Descartar contornos muy planos (suelo, sombras horizontales)
+                        if bh < 25 or bw > bh * 8:
+                            continue
+                        veh_cx = bx + bw // 2
+                        veh_cy = by + bh // 2   # centro del contorno (no borde inferior)
                         mejor_area = area
                         cv2.rectangle(frame_display, (bx, by), (bx + bw, by + bh), (0, 255, 255), 2)
 
-                # Dibujar líneas con endpoints visibles (círculos)
-                drag_nombre = estado_lineas["drag"][0] if estado_lineas["drag"] else None
-                for nombre, ln, color_base in [("a", la, (255, 100, 0)), ("b", lb, (0, 0, 255))]:
-                    color = (0, 180, 255) if drag_nombre == nombre else color_base
-                    p1 = (ln["x1"], ln["y1"]); p2 = (ln["x2"], ln["y2"])
-                    cv2.line(frame_display, p1, p2, color, 2)
-                    cv2.circle(frame_display, p1, R_ENDPOINT, color, -1)
-                    cv2.circle(frame_display, p2, R_ENDPOINT, color, -1)
-                    etiq = f"Linea {nombre.upper()}  [arrastrar]"
-                    cv2.putText(frame_display, etiq,
-                                (ln["x1"] + 8, ln["y1"] - 8),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 2)
                 cv2.putText(frame_display, "MIDIENDO VELOCIDAD…", (20, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
                 if veh_cx is not None and veh_cy is not None:
-                    # Detección de cruce por cambio de signo del producto cruzado.
-                    # _lado_linea devuelve un valor cuyo signo indica a qué lado
-                    # de la línea se encuentra el punto; si cambia entre frames
-                    # el vehículo cruzó la línea.
-                    lado_a = _lado_linea(veh_cx, veh_cy,
+                    lado_a = lado_linea(veh_cx, veh_cy,
                                          la["x1"], la["y1"], la["x2"], la["y2"])
-                    lado_b = _lado_linea(veh_cx, veh_cy,
+                    lado_b = lado_linea(veh_cx, veh_cy,
                                          lb["x1"], lb["y1"], lb["x2"], lb["y2"])
 
-                    if not cruzó_linea_a and lado_a >= 0:
-                        t_a = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
-                        cruzó_linea_a = True
-                        print("[Velocidad] Cruzó Línea A")
-                    if cruzó_linea_a and not cruzó_linea_b and lado_b >= 0:
-                        t_b = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
-                        cruzó_linea_b = True
-                        dt = t_b - t_a
-                        if dt > 0:
-                            velocidad_kmh = round((distancia_m / dt) * 3.6, 2)
-                        resultado_difuso = clasificar_velocidad(velocidad_kmh)
-                        estado = ESTADO_PLACA
-                        print(f"[Velocidad] {velocidad_kmh} km/h → {resultado_difuso['clasificacion']}")
+                    # Cruce real: exige cambio de signo negativo→positivo
+                    if not cruzó_linea_a:
+                        if prev_lado_a is not None and prev_lado_a < 0 and lado_a >= 0:
+                            t_a = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
+                            cruzó_linea_a = True
+                            print("[Velocidad] Cruzó Línea A")
+                        prev_lado_a = lado_a
+                    if cruzó_linea_a and not cruzó_linea_b:
+                        if prev_lado_b is not None and prev_lado_b < 0 and lado_b >= 0:
+                            t_b = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
+                            cruzó_linea_b = True
+                            dt = t_b - t_a
+                            if dt > 0:
+                                velocidad_kmh = round((distancia_m / dt) * 3.6, 2)
+                            resultado_difuso = clasificar_velocidad(velocidad_kmh)
+                            estado = ESTADO_PLACA
+                            print(f"[Velocidad] {velocidad_kmh} km/h → {resultado_difuso['clasificacion']}")
+                        prev_lado_b = lado_b
 
             # ─── MÓDULO PLACA (hilo worker) ────────────────────────
             elif estado == ESTADO_PLACA:
@@ -491,7 +334,7 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                         registrar_evento(placa_detectada, velocidad_kmh,
                                          clasif, horas, ruta_cap)
                         evento_registrado = True
-                        print(f"[Registro] Evento guardado en registros/eventos.json")
+                        print(f"[Registro] Evento guardado en outputs/registros/eventos.json")
 
                 cv2.rectangle(frame_display, (10, 10), (500, 170), (0, 0, 0), -1)
                 cv2.putText(frame_display, f"PLACA: {placa_detectada}",
@@ -517,6 +360,7 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                     estado = ESTADO_VELOCIDAD
                     cruzó_linea_a = cruzó_linea_b = False
                     t_a = t_b = 0.0
+                    prev_lado_a = prev_lado_b = None
                     placa_detectada = ""
                     evento_registrado = False
                     captura_guardada  = False
@@ -526,23 +370,35 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                     print("[Sistema] Listo para siguiente vehículo…")
 
             # ─── HUD inferior ──────────────────────────────────────
-            cv2.putText(frame_display, "F=fullscreen  R=reiniciar  ESC=salir",
+            hint = "F=fullscreen  R=reiniciar  ESC=salir"
+            if es_archivo:
+                hint += "  ←/J=retroceder  →/L=avanzar"
+            cv2.putText(frame_display, hint,
                         (10, alto - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
 
             cv2.imshow(WIN_NAME, frame_display)
 
-            # Para archivos de video: respetar el FPS original (no reproducir a máxima velocidad)
-            tecla = cv2.waitKey(delay_ms) & 0xFF
+            tecla_raw = cv2.waitKey(delay_ms)
+            tecla = tecla_raw & 0xFF if tecla_raw != -1 else 0xFF
             if tecla == 27:           # ESC
                 break
             elif tecla in (ord("f"), ord("F")):
                 pantalla_completa = not pantalla_completa
                 flag = cv2.WINDOW_FULLSCREEN if pantalla_completa else cv2.WINDOW_NORMAL
                 cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_FULLSCREEN, flag)
+            elif es_archivo and (tecla_raw in (81, 65361) or tecla == ord("j")):
+                # Retroceder 5 s en el video
+                pos = cap.get(cv2.CAP_PROP_POS_MSEC)
+                cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, pos - 5000.0))
+            elif es_archivo and (tecla_raw in (83, 65363) or tecla == ord("l")):
+                # Avanzar 5 s en el video
+                pos = cap.get(cv2.CAP_PROP_POS_MSEC)
+                cap.set(cv2.CAP_PROP_POS_MSEC, pos + 5000.0)
             elif tecla in (ord("r"), ord("R")):
                 estado = ESTADO_VELOCIDAD
                 cruzó_linea_a = cruzó_linea_b = False
                 t_a = t_b = 0.0
+                prev_lado_a = prev_lado_b = None
                 placa_detectada = ""
                 evento_registrado = False
                 resultado_difuso = None
@@ -577,7 +433,7 @@ def demo_sin_camara(placa_prueba: str = "ABC-1234", velocidad_prueba: float = 35
         placa_prueba, velocidad_prueba,
         resultado["clasificacion"], resultado["horas_indisponibilidad"],
     )
-    print(f"✅ Evento registrado en registros/eventos.json: {evento}")
+    print(f"✅ Evento registrado en outputs/registros/eventos.json: {evento}")
 
 
 # ----------------------------------------------------------------
@@ -632,6 +488,13 @@ if __name__ == "__main__":
     elif modo == "laptop":
         print("[Sistema] Fuente: cámara laptop → índice 0")
         procesar_vehiculo(cam_url=0)
+
+    elif modo == "web":
+        print("\n" + "=" * 60)
+        print("  INICIANDO SERVIDOR WEB (FastAPI)")
+        print("=" * 60)
+        import uvicorn
+        uvicorn.run("api.server:app", host="0.0.0.0", port=8000, reload=False)
 
     else:
         print(f"[ERROR] Modo desconocido: '{modo}'")
