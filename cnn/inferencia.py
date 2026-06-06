@@ -527,6 +527,13 @@ def reconocer_placa(frame: np.ndarray, max_variantes: int | None = None
     recorte, bbox = detectar_region_placa(frame)
     if recorte is None:
         return "", None, 0.0
+    # Upscale de placas pequeñas (autos lejanos): la segmentación es más estable
+    # con altura >= 48px. INTER_CUBIC interpola mejor los bordes de los caracteres.
+    h = recorte.shape[0]
+    if 0 < h < 48:
+        f = 48.0 / h
+        recorte = cv2.resize(recorte, (max(1, int(recorte.shape[1] * f)), 48),
+                             interpolation=cv2.INTER_CUBIC)
     placa, _texto, conf = leer_placa_cnn(recorte)
     return placa, bbox, conf
 

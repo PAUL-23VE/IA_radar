@@ -183,9 +183,16 @@ class RadarPipeline:
         # YOLO de vehiculos (COCO). Se cachea en la instancia para no recargar.
         if getattr(self, "_veh_yolo", None) is None:
             self._veh_yolo = YOLO("yolo11n.pt")
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    self._veh_yolo.to("cuda")   # CRITICO: si no, corre en CPU = lag
+            except Exception:
+                pass
         veh_yolo = self._veh_yolo
         VEH_CLASSES = [2, 3, 5, 7]   # car, motorcycle, bus, truck (COCO)
         MIN_H_OCR = 0.10 * alto       # solo OCR de vehiculos suficientemente cercanos
+        MIN_H_TRACK = 0.07 * alto     # ignora autos diminutos (lejanos) -> menos trabajo
 
         tracks = {}
         frame_idx = 0
@@ -223,15 +230,20 @@ class RadarPipeline:
             lb = self.estado_lineas["linea_b"]
             frame_display = frame.copy()
 
-            # ── Tracking de vehiculos ────────────────────────────────────────
-            res = veh_yolo.track(frame, classes=VEH_CLASSES, conf=0.35,
+            # ── Tracking de vehiculos (sobre frame REDUCIDo para ir 2-4x mas rapido)
+            DET_SCALE = 0.5
+            small = cv2.resize(frame, (0, 0), fx=DET_SCALE, fy=DET_SCALE)
+            res = veh_yolo.track(small, classes=VEH_CLASSES, conf=0.35,
                                  persist=True, verbose=False, tracker="bytetrack.yaml")[0]
+            inv = 1.0 / DET_SCALE
 
             vivos = set()
             if res.boxes is not None and res.boxes.id is not None:
                 for box, tid in zip(res.boxes.xyxy.cpu().numpy(),
                                     res.boxes.id.cpu().numpy()):
-                    x1, y1, x2, y2 = map(int, box)
+                    # Escalar caja de vuelta a coordenadas del frame original.
+                    x1, y1, x2, y2 = (int(box[0]*inv), int(box[1]*inv),
+                                      int(box[2]*inv), int(box[3]*inv))
                     tid = int(tid)
                     vivos.add(tid)
                     tr = tracks.get(tid) or tracks.setdefault(tid, self._nuevo_track())
@@ -242,8 +254,19 @@ class RadarPipeline:
                     cy = y2
                     bh = y2 - y1
 
-                    # OCR de placa si el vehiculo esta cerca y aun no registrado.
-                    if not tr["registrado"] and bh >= MIN_H_OCR:
+                    # Autos diminutos (lejanos): solo dibujar, sin medir ni OCR.
+                    # Su placa es ilegible y solo consumen CPU.
+                    if bh < MIN_H_TRACK and not tr["registrado"]:
+                        cv2.rectangle(frame_display, (x1, y1), (x2, y2), (130, 130, 130), 1)
+                        continue
+
+                    # OCR de placa SOLO para autos en la zona de medicion (ya
+                    # cruzaron una linea) y no registrados. Asi se SALTAN todos los
+                    # autos PARQUEADOS (nunca cruzan) -> mucho menos lag.
+                    # Crop del frame ORIGINAL full-res; alterna frames por track.
+                    en_zona = tr["crossed_a"] or tr["crossed_b"]
+                    if (en_zona and not tr["registrado"] and bh >= MIN_H_OCR
+                            and (frame_idx + tid) % 2 == 0):
                         veh_crop = frame[max(0, y1):y2, max(0, x1):x2]
                         if veh_crop.size:
                             placa, _bb, conf = reconocer_placa(veh_crop)
@@ -273,12 +296,11 @@ class RadarPipeline:
                         if tr["speed"] > 0:
                             self._emit("event", {"type": "velocidad", "velocidad": tr["speed"]})
 
-                    # Registro: medido con velocidad valida y hay placa (o grace 1.5s).
-                    if tr["medido"] and tr["speed"] > 0 and not tr["registrado"]:
-                        placa_final = tr["votador"].consenso() or tr["votador"].mejor_lectura()[0]
-                        grace = tr["t_b_real"] > 0 and time.time() - tr["t_b_real"] > 1.5
-                        if placa_final or grace:
-                            self._registrar_track(frame, tr, placa_final)
+                    # Registro rapido: cruzo ambas, hay consenso rico (>=4 votos de
+                    # cerca) -> registra mientras el auto sigue visible.
+                    if (tr["medido"] and tr["speed"] > 0 and not tr["registrado"]
+                            and tr["votador"].consenso() and tr["votador"].n >= 4):
+                        self._registrar_track(frame, tr, tr["votador"].consenso())
 
                     # Dibujo: color segun estado del track.
                     if tr["registrado"]:
@@ -296,6 +318,18 @@ class RadarPipeline:
                         cv2.putText(frame_display, etiqueta, (x1, max(18, y1 - 8)),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
+            # Finalizador: tracks medidos que NO se registraron rapido (auto salio
+            # del frame o junto pocos votos). Registra con lo mejor disponible al
+            # perderse (no visto este frame) o tras grace de 1.2s.
+            for d in tracks.values():
+                if d["medido"] and d["speed"] > 0 and not d["registrado"]:
+                    perdido = d["last_seen"] != frame_idx
+                    grace = d["t_b_real"] > 0 and time.time() - d["t_b_real"] > 1.2
+                    if perdido or grace:
+                        placa_final = d["votador"].consenso() or d["votador"].mejor_lectura()[0]
+                        if placa_final:
+                            self._registrar_track(frame, d, placa_final)
+
             # Limpieza de tracks perdidos (no vistos en 30 frames).
             for tid in [t for t, d in tracks.items()
                         if frame_idx - d["last_seen"] > 30]:
@@ -307,9 +341,16 @@ class RadarPipeline:
             if es_archivo:
                 elapsed = time.time() - start_time
                 target_delay = delay_ms / (1000.0 * getattr(self, 'playback_speed', 1.0))
-                sleep_time = target_delay - elapsed
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
+                if elapsed < target_delay:
+                    time.sleep(target_delay - elapsed)
+                else:
+                    # Procesar es mas lento que el ritmo real -> saltar frames para
+                    # NO atrasarse (el video sigue a velocidad correcta). La velocidad
+                    # medida usa POS_MSEC, asi que sigue siendo exacta pese al salto.
+                    n_skip = min(10, int(elapsed / target_delay) - 1)
+                    for _ in range(max(0, n_skip)):
+                        if not self.cap.grab():
+                            break
 
     def _registrar_track(self, frame, tr, placa_final):
         """Guarda captura, registra evento y notifica para un track que cruzo B."""
