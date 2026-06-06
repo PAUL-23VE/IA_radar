@@ -35,14 +35,22 @@ ROOT    = Path(__file__).resolve().parents[1]
 DESTINO = ROOT / "data" / "datasets" / "dataset_propio_ttf"
 CLASES  = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-# Fuentes que se parecen a la placa EC (bold sans). DejaVu Sans Bold es la más
-# cercana; las demás dan variedad de trazo para que el modelo generalice.
+# Fuentes que se parecen a la placa EC (bold/heavy condensed sans).
+# FiraSansCompressed-Heavy y FiraSansCondensed-Heavy son las más cercanas al
+# trazo grueso y proporciones condensadas de la tipografía ANT Ecuador.
 CANDIDATAS = [
+    # Primarias: condensadas/heavy — más cercanas a la fuente EC real
+    "/usr/share/fonts/TTF/FiraSansCompressed-Heavy.ttf",
+    "/usr/share/fonts/TTF/FiraSansCondensed-Heavy.ttf",
+    "/usr/share/fonts/TTF/FiraSansCompressed-ExtraBold.ttf",
+    "/usr/share/fonts/TTF/FiraSansCondensed-ExtraBold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansCondensed-Bold.ttf",
+    "/usr/share/fonts/gsfonts/NimbusSansNarrow-Bold.otf",
+    # Secundarias: variedad de trazo para generalización
     "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-    "/usr/share/fonts/carlito/Carlito-Bold.ttf",
     "/usr/share/fonts/gsfonts/NimbusSans-Bold.otf",
-    "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/carlito/Carlito-Bold.ttf",
 ]
 
 
@@ -78,8 +86,9 @@ def _perspectiva(img: np.ndarray, mag: float) -> np.ndarray:
 
 
 def _grosor(img: np.ndarray) -> np.ndarray:
-    k = random.choice([1, 2, 3])
-    op = random.choice(["erode", "dilate", "none"])
+    # Sesgar hacia trazos más gruesos (plaça EC usa trazo muy bold)
+    k = random.choice([1, 2, 2, 3, 3])
+    op = random.choice(["dilate", "dilate", "erode", "none"])
     if op == "none":
         return img
     ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
@@ -146,7 +155,7 @@ def augmentar(glifo: np.ndarray, rng: random.Random) -> np.ndarray:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--por-clase", type=int, default=600)
+    ap.add_argument("--por-clase", type=int, default=3000)
     ap.add_argument("--semilla", type=int, default=42)
     args = ap.parse_args()
 

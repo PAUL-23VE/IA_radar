@@ -31,8 +31,17 @@
                 </div>
                 
                 <div class="input-group" id="source-path-group" style="display: none;">
-                    <label for="source-path">Ruta / URL</label>
-                    <input type="text" id="source-path" placeholder="/ruta/al/video.mp4">
+                    <label for="source-path">URL del Stream</label>
+                    <input type="text" id="source-path" placeholder="http://ip:port/video">
+                </div>
+
+                <div class="input-group" id="source-file-group" style="display: none;">
+                    <label for="source-file">Seleccionar Video</label>
+                    <div class="file-picker-wrapper">
+                        <label for="source-file" class="file-picker-btn">Buscar archivo...</label>
+                        <input type="file" id="source-file" accept="video/*" style="display: none;">
+                        <span class="file-picker-name" id="file-picker-name">Ningún archivo seleccionado</span>
+                    </div>
                 </div>
                 
                 <div class="actions">
@@ -81,6 +90,15 @@
                 <img id="video-stream" src="" alt="Video Feed" style="display: none;">
                 <!-- Capa interactiva de Canvas -->
                 <canvas id="overlay-canvas"></canvas>
+                
+                <!-- Controles de video interactivos -->
+                <div id="playback-controls" class="playback-controls" style="display: none;">
+                    <button class="btn icon-btn" id="btn-restart" title="Volver al inicio">⏮</button>
+                    <button class="btn icon-btn" id="btn-seek-bwd" title="Retroceder 5s">⏪</button>
+                    <button class="btn icon-btn" id="btn-toggle-pause" title="Pausar/Reanudar">⏸</button>
+                    <button class="btn icon-btn" id="btn-seek-fwd" title="Adelantar 5s">⏩</button>
+                </div>
+                
                 <!-- Placeholder -->
                 <div id="video-placeholder">
                     <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" stroke-width="1.5" fill="none">

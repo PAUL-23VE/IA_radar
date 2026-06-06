@@ -448,3 +448,82 @@ select option {
 @keyframes fadeOut {
     to { opacity: 0; transform: translateY(10px); }
 }
+
+/* File Picker Styling */
+.file-picker-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px dashed var(--glass-border);
+    border-radius: 8px;
+    padding: 1rem;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.file-picker-wrapper:hover {
+    border-color: var(--primary);
+}
+
+.file-picker-btn {
+    background: var(--primary);
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-block;
+}
+
+.file-picker-btn:hover {
+    background: var(--primary-hover);
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+}
+
+.file-picker-name {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    word-break: break-all;
+    text-align: center;
+}
+
+/* Playback Controls */
+.playback-controls {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    background: rgba(15, 23, 42, 0.8);
+    padding: 10px 20px;
+    border-radius: 30px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    z-index: 10;
+}
+
+.playback-controls .icon-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    color: white;
+    font-size: 1.2rem;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.playback-controls .icon-btn:hover {
+    background: var(--primary-color);
+    transform: scale(1.1);
+}

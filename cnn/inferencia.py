@@ -175,7 +175,9 @@ def _binarizar_texto(g: np.ndarray) -> np.ndarray:
     Ajusta el blockSize a la altura del recorte para que cubra ~1 carácter.
     """
     h = g.shape[0]
-    bs = max(11, int(h * 0.6) | 1)        # impar, ~60% de la altura
+    # Cap a 51: blockSizes > 51 (placas grandes h > ~85px) degradan la binarización
+    # porque el vecindario captura el carácter completo en lugar del entorno local.
+    bs = max(11, min(int(h * 0.6) | 1, 51))
     binimg = cv2.adaptiveThreshold(
         g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, 9,
     )
@@ -208,30 +210,94 @@ def _cajas_caracter(binimg: np.ndarray, H: int, W: int) -> list[tuple]:
 def _aislar_banda(gris: np.ndarray) -> np.ndarray:
     """
     Aísla la banda de la fila principal de caracteres (ABC-1234), descartando
-    el encabezado 'ECUADOR', el logo ANT, tornillos y marco.
+    el encabezado 'ECUADOR', el logo ANT, tornillos, marco y carrocería.
 
-    Idea: los caracteres principales forman el grupo de componentes MÁS ALTOS y
-    alineados verticalmente. El encabezado es más pequeño; el logo/tornillos
-    quedan fuera de ese clúster de altura. Recortamos al rango vertical de ese
-    clúster con un pequeño margen.
+    Estrategia: componentes conexos primero (rápido, preciso para placas normales).
+    Si CC no encuentra cajas válidas (chars fusionados en placas grandes / con
+    carrocería incluida), cae a proyección horizontal por fila.
+
+    Normaliza a MAX_H_NORM=64 antes de binarizar para blockSize estable.
     """
     h0, w0 = gris.shape[:2]
-    binimg = _binarizar_texto(gris)
-    cajas = _cajas_caracter(binimg, h0, w0)
-    if len(cajas) < 2:
+
+    MAX_H_NORM = 64
+    if h0 > MAX_H_NORM:
+        escala_n = MAX_H_NORM / h0
+        gris_n = cv2.resize(gris, (max(1, int(w0 * escala_n)), MAX_H_NORM),
+                            interpolation=cv2.INTER_LINEAR)
+    else:
+        escala_n = 1.0
+        gris_n = gris
+    hn, wn = gris_n.shape[:2]
+
+    binimg = _binarizar_texto(gris_n)
+
+    # ── Método 1: componentes conexos ────────────────────────────────────
+    cajas = _cajas_caracter(binimg, hn, wn)
+    if len(cajas) >= 2:
+        alturas = np.array([c[3] for c in cajas], dtype=np.float32)
+        h_med = float(np.median(alturas))
+        grandes = [c for c in cajas if c[3] >= 0.7 * h_med]
+        if len(grandes) < 2:
+            grandes = cajas
+        ys = [c[1] for c in grandes]
+        ye = [c[1] + c[3] for c in grandes]
+        y0_n = max(0, int(np.median(ys) - 0.18 * h_med))
+        y1_n = min(hn, int(np.median(ye) + 0.18 * h_med))
+        if 0.15 * hn <= (y1_n - y0_n) < 0.92 * hn:
+            inv = 1.0 / escala_n
+            y0 = max(0, int(y0_n * inv))
+            y1 = min(h0, int(y1_n * inv))
+            if y1 - y0 >= 4:
+                return gris[y0:y1]
+
+    # ── Método 2: proyección horizontal (fallback para placas grandes) ───
+    # Suma de píxeles blancos por fila → densidad vertical de texto.
+    proj = binimg.sum(axis=1).astype(np.float32)
+    pmax = proj.max()
+    if pmax == 0:
+        return gris
+    proj /= pmax
+
+    active = proj > 0.20
+    if active.sum() < 4:
         return gris
 
-    alturas = np.array([c[3] for c in cajas], dtype=np.float32)
-    h_med = float(np.median(alturas))
-    # Caracteres principales: altura cercana a la mediana de los más altos
-    grandes = [c for c in cajas if c[3] >= 0.7 * h_med]
-    if len(grandes) < 2:
-        grandes = cajas
-    ys = [c[1] for c in grandes]
-    ye = [c[1] + c[3] for c in grandes]
-    y0 = max(0, int(np.median(ys) - 0.18 * h_med))
-    y1 = min(h0, int(np.median(ye) + 0.18 * h_med))
-    if y1 - y0 < 0.3 * h0:                 # banda implausible → usar todo
+    # Encontrar todos los bloques activos y seleccionar el de mayor densidad·raíz(longitud)
+    blocks = []
+    in_block = False
+    cur_start = 0
+    for i, a in enumerate(active):
+        if a and not in_block:
+            cur_start = i; in_block = True
+        elif not a and in_block:
+            blocks.append((cur_start, i))
+            in_block = False
+    if in_block:
+        blocks.append((cur_start, hn))
+
+    if not blocks:
+        return gris
+
+    def _score(b):
+        s, e = b
+        length = e - s
+        density = float(proj[s:e].mean()) if length > 0 else 0.0
+        return density * (length ** 0.5)
+
+    bs, be = max(blocks, key=_score)
+    mejor_len = be - bs
+    margen = max(3, int(mejor_len * 0.20))
+    y0_n = max(0, bs - margen)
+    y1_n = min(hn, be + margen)
+
+    if (y1_n - y0_n) >= 0.92 * hn or (y1_n - y0_n) < 0.12 * hn:
+        return gris
+
+    inv = 1.0 / escala_n
+    y0 = max(0, int(y0_n * inv))
+    y1 = min(h0, int(y1_n * inv))
+    if y1 - y0 < 4:
         return gris
     return gris[y0:y1]
 

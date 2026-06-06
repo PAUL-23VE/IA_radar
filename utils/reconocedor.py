@@ -14,7 +14,7 @@ from inferencia import reconocer_placa
 #  Hilo de reconocimiento de placas (no bloquea el loop principal)
 # ----------------------------------------------------------------
 
-class RecognitionWorker(threading.Thread):
+class RecognitionWorker:
     """
     Procesa frames en un hilo separado para no bloquear la captura.
     Solo mantiene el frame más reciente en la cola (descarta frames viejos).
@@ -22,12 +22,12 @@ class RecognitionWorker(threading.Thread):
     """
 
     def __init__(self):
-        super().__init__(daemon=True)
         self._inbox   = queue.Queue(maxsize=1)
         self._result  = ("", None, 0.0)   # última lectura (para el bbox/HUD)
         self._pendientes = []             # lecturas nuevas no consumidas
         self._lock    = threading.Lock()
-        self._active  = True
+        self._active  = False
+        self.thread = None
 
     def submit(self, frame: np.ndarray) -> None:
         try:
@@ -54,8 +54,17 @@ class RecognitionWorker(threading.Thread):
             self._pendientes = []
             self._result = ("", None, 0.0)
 
+    def start(self) -> None:
+        if not self._active:
+            self._active = True
+            self.thread = threading.Thread(target=self.run, daemon=True)
+            self.thread.start()
+
     def stop(self) -> None:
         self._active = False
+        if self.thread:
+            self.thread.join(timeout=2.0)
+            self.thread = None
 
     def run(self) -> None:
         while self._active:
@@ -81,18 +90,27 @@ class VotadorPlaca:
     frame (blur, ángulo) y lleva la precisión cerca del 100%.
     """
 
-    def __init__(self, min_votos: int = 4, conf_min: float = 0.45):
+    def __init__(self, min_votos: int = 2, conf_min: float = 0.45):
         self.min_votos = min_votos
         self.conf_min  = conf_min
         self._lecturas: list[str] = []
+        self._confs: list[float] = []
 
     def agregar(self, placa: str, conf: float) -> None:
         if placa and conf >= self.conf_min:
             self._lecturas.append(placa)
+            self._confs.append(conf)
 
     @property
     def n(self) -> int:
         return len(self._lecturas)
+
+    def mejor_lectura(self) -> tuple[str, float]:
+        """Retorna (placa, conf) de la lectura con mayor confianza acumulada."""
+        if not self._lecturas:
+            return "", 0.0
+        idx = max(range(len(self._confs)), key=lambda i: self._confs[i])
+        return self._lecturas[idx], self._confs[idx]
 
     def consenso(self) -> str:
         """Consenso si hay suficientes votos; '' en caso contrario."""
@@ -109,3 +127,4 @@ class VotadorPlaca:
 
     def reset(self) -> None:
         self._lecturas = []
+        self._confs = []

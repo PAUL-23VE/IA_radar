@@ -5,6 +5,9 @@ const WS_URL = "ws://localhost:8000/ws/events";
 const sourceTypeSel = document.getElementById('source-type');
 const sourcePathGroup = document.getElementById('source-path-group');
 const sourcePathInput = document.getElementById('source-path');
+const sourceFileGroup = document.getElementById('source-file-group');
+const sourceFileInput = document.getElementById('source-file');
+const filePickerName = document.getElementById('file-picker-name');
 const btnStart = document.getElementById('btn-start');
 const btnStop = document.getElementById('btn-stop');
 const videoStream = document.getElementById('video-stream');
@@ -23,6 +26,13 @@ const eventsListEl = document.getElementById('events-list');
 const canvas = document.getElementById('overlay-canvas');
 const ctx = canvas.getContext('2d');
 
+// Playback Controls
+const playbackControls = document.getElementById('playback-controls');
+const btnRestart = document.getElementById('btn-restart');
+const btnSeekBwd = document.getElementById('btn-seek-bwd');
+const btnTogglePause = document.getElementById('btn-toggle-pause');
+const btnSeekFwd = document.getElementById('btn-seek-fwd');
+
 let ws = null;
 let lines = {
     linea_a: { x1: 0, y1: 0, x2: 0, y2: 0 },
@@ -37,9 +47,24 @@ const POINT_RADIUS = 12;
 sourceTypeSel.addEventListener('change', (e) => {
     if (e.target.value === 'camera') {
         sourcePathGroup.style.display = 'none';
+        sourceFileGroup.style.display = 'none';
+    } else if (e.target.value === 'video') {
+        sourcePathGroup.style.display = 'none';
+        sourceFileGroup.style.display = 'flex';
     } else {
         sourcePathGroup.style.display = 'flex';
-        sourcePathInput.placeholder = e.target.value === 'video' ? '/ruta/al/video.mp4' : 'http://ip:port/video';
+        sourceFileGroup.style.display = 'none';
+        sourcePathInput.placeholder = 'http://ip:port/video';
+    }
+});
+
+// Update file picker name label
+sourceFileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        filePickerName.textContent = file.name;
+    } else {
+        filePickerName.textContent = "Ningún archivo seleccionado";
     }
 });
 
@@ -59,10 +84,42 @@ function showToast(message) {
 // Start Pipeline
 btnStart.addEventListener('click', async () => {
     let fuente = 0;
-    if (sourceTypeSel.value === 'video' || sourceTypeSel.value === 'stream') {
+    
+    if (sourceTypeSel.value === 'video') {
+        const file = sourceFileInput.files[0];
+        if (!file) {
+            showToast("Por favor selecciona un archivo de video.");
+            return;
+        }
+        
+        showToast("Subiendo video al servidor...");
+        btnStart.disabled = true;
+        
+        try {
+            const formData = new FormData();
+            formData.append("file", file);
+            
+            const uploadRes = await fetch(`${API_URL}/api/upload`, {
+                method: "POST",
+                body: formData
+            });
+            const uploadData = await uploadRes.json();
+            
+            if (!uploadData.success) {
+                showToast("Error al subir el video: " + uploadData.message);
+                btnStart.disabled = false;
+                return;
+            }
+            fuente = uploadData.path;
+        } catch (uploadError) {
+            showToast("Fallo la conexión al subir el video.");
+            btnStart.disabled = false;
+            return;
+        }
+    } else if (sourceTypeSel.value === 'stream') {
         fuente = sourcePathInput.value.trim();
         if (!fuente) {
-            showToast("Por favor ingresa una ruta o URL válida.");
+            showToast("Por favor ingresa una URL válida.");
             return;
         }
     }
@@ -84,13 +141,21 @@ btnStart.addEventListener('click', async () => {
             videoStream.style.display = 'block';
             videoPlaceholder.style.display = 'none';
             
+            // Save to localStorage
+            if (sourceTypeSel.value === 'video') {
+                localStorage.setItem('lastFuente', fuente);
+            }
+            
+            checkStatusAndSyncUI();
             connectWebSocket();
             fetchLines(); // Load initial lines
         } else {
             showToast(data.message);
+            btnStart.disabled = false;
         }
     } catch (error) {
         showToast("Error conectando con el backend.");
+        btnStart.disabled = false;
     }
 });
 
@@ -104,6 +169,7 @@ btnStop.addEventListener('click', async () => {
         videoStream.src = "";
         videoStream.style.display = 'none';
         videoPlaceholder.style.display = 'flex';
+        playbackControls.style.display = 'none';
         
         if (ws) ws.close();
         
@@ -113,6 +179,71 @@ btnStop.addEventListener('click', async () => {
         showToast("Error deteniendo el pipeline.");
     }
 });
+
+// Playback Controls
+async function sendPlaybackCmd(action) {
+    try {
+        const res = await fetch(`${API_URL}/api/playback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+        });
+        const data = await res.json();
+        if (action === 'toggle' && data.success) {
+            btnTogglePause.textContent = data.paused ? '▶️' : '⏸';
+            showToast(data.paused ? "Pausado" : "Reanudado");
+        }
+    } catch (e) {
+        showToast("Error enviando comando de reproducción.");
+    }
+}
+
+btnTogglePause.addEventListener('click', () => sendPlaybackCmd('toggle'));
+btnSeekFwd.addEventListener('click', () => sendPlaybackCmd('seek_fwd'));
+btnSeekBwd.addEventListener('click', () => sendPlaybackCmd('seek_bwd'));
+btnRestart.addEventListener('click', () => sendPlaybackCmd('restart'));
+
+// Status Sync
+async function checkStatusAndSyncUI() {
+    try {
+        const res = await fetch(`${API_URL}/api/status`);
+        const status = await res.json();
+        
+        if (status.running) {
+            btnStart.disabled = true;
+            btnStop.disabled = false;
+            videoStream.src = `${API_URL}/video_feed?t=${new Date().getTime()}`;
+            videoStream.style.display = 'block';
+            videoPlaceholder.style.display = 'none';
+            
+            if (status.es_archivo) {
+                playbackControls.style.display = 'flex';
+                btnTogglePause.textContent = status.paused ? '▶️' : '⏸';
+            } else {
+                playbackControls.style.display = 'none';
+            }
+            
+            // Si no estaba conectado a WS, conectar
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                connectWebSocket();
+                fetchLines();
+            }
+        } else {
+            // Restore last selected video from local storage
+            const lastFuente = localStorage.getItem('lastFuente');
+            if (lastFuente) {
+                sourceTypeSel.value = 'video';
+                sourceTypeSel.dispatchEvent(new Event('change'));
+                filePickerName.textContent = "Último video listo (haz clic en Iniciar)";
+            }
+        }
+    } catch (e) {
+        console.error("No se pudo obtener el estado:", e);
+    }
+}
+
+// Initial Sync
+window.addEventListener('DOMContentLoaded', checkStatusAndSyncUI);
 
 // WebSocket Connection
 function connectWebSocket() {

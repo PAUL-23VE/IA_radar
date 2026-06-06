@@ -1,11 +1,15 @@
 import asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import json
 import os
+import shutil
+
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 from api.pipeline import pipeline
 
@@ -59,19 +63,30 @@ def on_pipeline_event(event_type, payload):
 pipeline.on_event(on_pipeline_event)
 
 
-def video_stream_generator():
+async def video_stream_generator():
     while True:
         frame_bytes = pipeline.get_jpeg_frame()
         if frame_bytes:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            await asyncio.sleep(0.033)  # cap ~30fps
         else:
-            # Avoid tight loop if no frame is ready
-            asyncio.run(asyncio.sleep(0.01))
+            await asyncio.sleep(0.01)
 
 @app.get("/video_feed")
 async def video_feed():
     return StreamingResponse(video_stream_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        file_path = os.path.join(UPLOAD_DIR, file.filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return {"success": True, "path": os.path.abspath(file_path)}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 class StartRequest(BaseModel):
@@ -91,6 +106,35 @@ async def start_pipeline(req: StartRequest):
 async def stop_pipeline():
     pipeline.stop()
     return {"success": True}
+
+class PlaybackRequest(BaseModel):
+    action: str  # 'pause', 'resume', 'toggle', 'seek_fwd', 'seek_bwd', 'restart'
+
+@app.post("/api/playback")
+async def playback_control(req: PlaybackRequest):
+    if req.action == "toggle":
+        is_paused = pipeline.toggle_pause()
+        return {"success": True, "paused": is_paused}
+    elif req.action == "pause":
+        pipeline.paused = True
+        return {"success": True, "paused": True}
+    elif req.action == "resume":
+        pipeline.paused = False
+        return {"success": True, "paused": False}
+    elif req.action == "seek_fwd":
+        success = pipeline.seek(5.0)
+        return {"success": success}
+    elif req.action == "seek_bwd":
+        success = pipeline.seek(-5.0)
+        return {"success": success}
+    elif req.action == "restart":
+        success = pipeline.restart_video()
+        return {"success": success}
+    return {"success": False, "message": "Acción desconocida"}
+
+@app.get("/api/status")
+async def get_status():
+    return pipeline.get_status()
 
 class Point(BaseModel):
     x1: int
