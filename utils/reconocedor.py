@@ -90,7 +90,7 @@ class VotadorPlaca:
     frame (blur, ángulo) y lleva la precisión cerca del 100%.
     """
 
-    def __init__(self, min_votos: int = 2, conf_min: float = 0.45):
+    def __init__(self, min_votos: int = 3, conf_min: float = 0.35):
         self.min_votos = min_votos
         self.conf_min  = conf_min
         self._lecturas: list[str] = []
@@ -100,6 +100,13 @@ class VotadorPlaca:
         if placa and conf >= self.conf_min:
             self._lecturas.append(placa)
             self._confs.append(conf)
+
+    def votos_consenso(self) -> int:
+        """Cuantas lecturas coinciden con el consenso actual (estabilidad)."""
+        c = self.consenso()
+        if not c:
+            return 0
+        return sum(1 for p in self._lecturas if p == c)
 
     @property
     def n(self) -> int:
@@ -113,17 +120,26 @@ class VotadorPlaca:
         return self._lecturas[idx], self._confs[idx]
 
     def consenso(self) -> str:
-        """Consenso si hay suficientes votos; '' en caso contrario."""
+        """
+        Consenso por posición PONDERADO por confianza. Los frames más nítidos
+        (mayor conf, auto más cerca) pesan más en cada carácter. Esto estabiliza
+        las letras que bailan entre frames borrosos por motion blur.
+        '' si no hay suficientes votos.
+        """
         if len(self._lecturas) < self.min_votos:
             return ""
         # Agrupar por longitud (ABC-NNN vs ABC-NNNN) y usar la más frecuente
         longitud = Counter(len(p) for p in self._lecturas).most_common(1)[0][0]
-        grupo    = [p for p in self._lecturas if len(p) == longitud]
-        # Mayoría por posición
-        return "".join(
-            Counter(p[i] for p in grupo).most_common(1)[0][0]
-            for i in range(longitud)
-        )
+        grupo    = [(p, c) for p, c in zip(self._lecturas, self._confs)
+                    if len(p) == longitud]
+        # Por cada posición, suma de confianza por carácter → gana el de mayor masa
+        res = []
+        for i in range(longitud):
+            masa: dict[str, float] = {}
+            for p, c in grupo:
+                masa[p[i]] = masa.get(p[i], 0.0) + c
+            res.append(max(masa, key=masa.get))
+        return "".join(res)
 
     def reset(self) -> None:
         self._lecturas = []

@@ -38,13 +38,13 @@ from modelo import crear_modelo_cnn  # noqa: E402
 RUTA_YOLO = os.getenv("YOLO_MODEL_PATH", "best.pt")
 RUTA_CNN  = os.getenv("OCR_CNN_PATH",
                       os.path.join(os.path.dirname(__file__), "..", "models", "ocr_char.pt"))
-CONF_PLACA = 0.15
+CONF_PLACA = 0.10
 
 IMG_SIZE = 32  # tamaño de entrada del clasificador (se sobrescribe con el del checkpoint)
 
-# Confianza mínima media de los caracteres para aceptar una lectura.
-# El filtro principal de falsos positivos es la validación de formato ABC-NNNN.
-CONF_CNN_MIN = 0.35
+# Confianza mínima: 0.0 para aceptar cualquier lectura con formato valido.
+# El filtro real es la validacion de formato ABC-NNNN, no la confianza.
+CONF_CNN_MIN = 0.30
 
 # Singletons — thread-safe
 _lock         = threading.Lock()
@@ -501,15 +501,11 @@ def leer_placa_cnn(recorte: np.ndarray) -> tuple[str, str, float]:
     texto_pos, conf_pos = _decodificar_posicional(probs)
     placa = _validar_formato(texto_pos)
     if placa:
-        if conf_pos < CONF_CNN_MIN:
-            placa = ""
         return placa, texto_pos, conf_pos
 
     # Fallback: argmax plano + búsqueda de formato por ventana deslizante
     texto, conf = _decodificar_plano(probs)
     placa = _validar_formato(texto)
-    if placa and conf < CONF_CNN_MIN:
-        placa = ""
     return placa, texto, conf
 
 

@@ -30,9 +30,9 @@ DATASET_REAL  = ROOT / "data" / "datasets" / "Dataset_OCR_Placas"
 DATASET_SYNTH = ROOT / "data" / "datasets" / "dataset_propio_ttf"
 RUTA_MODELO   = ROOT / "models" / "ocr_char.pt" # Guardamos como el principal
 IMG_SIZE   = 64
-EPOCHS     = 70
+EPOCHS     = 60
 BATCH_SIZE = 256
-NUM_WORKERS = 8
+NUM_WORKERS = 4
 
 device   = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 usar_amp = device.type == "cuda"
@@ -126,10 +126,10 @@ def entrenar():
     pin = device.type == "cuda"
     train_loader = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True,
                               num_workers=NUM_WORKERS, pin_memory=pin, drop_last=True,
-                              persistent_workers=NUM_WORKERS > 0)
+                              persistent_workers=False)
     val_loader = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=False,
                             num_workers=NUM_WORKERS, pin_memory=pin,
-                            persistent_workers=NUM_WORKERS > 0)
+                            persistent_workers=False)
     test_loader = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=False,
                              num_workers=NUM_WORKERS, pin_memory=pin)
 
@@ -156,12 +156,12 @@ def entrenar():
             rl += loss.item() * x.size(0)
             corr += (out.argmax(1) == y).sum().item(); total += x.size(0)
         va, vl = evaluar(modelo, val_loader, criterion)
-        print(f"Epoch {epoch:02d}/{EPOCHS} | Train {corr/total:.4f} | Val {va:.4f} (loss {vl:.4f}) | LR {optimizer.param_groups[0]['lr']:.2e}")
+        print(f"Epoch {epoch:02d}/{EPOCHS} | Train {corr/total:.4f} | Val {va:.4f} (loss {vl:.4f}) | LR {optimizer.param_groups[0]['lr']:.2e}", flush=True)
         if va > mejor:
             mejor = va
             torch.save({"state_dict": modelo.state_dict(),
                         "classes": CLASSES, "img_size": IMG_SIZE}, RUTA_MODELO)
-            print(f"   ✓ guardado (val={mejor:.4f})")
+            print(f"   ✓ guardado (val={mejor:.4f})", flush=True)
     print(f"\n[OK] Mejor val: {mejor:.4f} -> {RUTA_MODELO}")
     
     # ── Evaluación final sobre TEST con el mejor modelo ──

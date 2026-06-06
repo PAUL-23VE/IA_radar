@@ -26,6 +26,7 @@
                     <select id="source-type">
                         <option value="camera">Cámara Web (0)</option>
                         <option value="video">Archivo de Video</option>
+                        <option value="image">Imagen(es) Estática(s)</option>
                         <option value="stream">Stream Digital (URL)</option>
                     </select>
                 </div>
@@ -41,6 +42,15 @@
                         <label for="source-file" class="file-picker-btn">Buscar archivo...</label>
                         <input type="file" id="source-file" accept="video/*" style="display: none;">
                         <span class="file-picker-name" id="file-picker-name">Ningún archivo seleccionado</span>
+                    </div>
+                </div>
+
+                <div class="input-group" id="source-image-group" style="display: none;">
+                    <label for="source-image">Seleccionar Imagen(es)</label>
+                    <div class="file-picker-wrapper">
+                        <label for="source-image" class="file-picker-btn">Buscar imágenes...</label>
+                        <input type="file" id="source-image" accept="image/*" multiple style="display: none;">
+                        <span class="file-picker-name" id="image-picker-name">Ninguna imagen seleccionada</span>
                     </div>
                 </div>
                 
@@ -97,6 +107,20 @@
                     <button class="btn icon-btn" id="btn-seek-bwd" title="Retroceder 5s">⏪</button>
                     <button class="btn icon-btn" id="btn-toggle-pause" title="Pausar/Reanudar">⏸</button>
                     <button class="btn icon-btn" id="btn-seek-fwd" title="Adelantar 5s">⏩</button>
+                    <div class="input-group" style="width: auto;" id="playback-speed-group">
+                        <select id="playback-speed" style="padding: 5px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px; outline: none; margin-left: 10px;">
+                            <option value="0.25">0.25x</option>
+                            <option value="0.5">0.5x</option>
+                            <option value="1.0" selected>1.0x</option>
+                            <option value="1.5">1.5x</option>
+                            <option value="2.0">2.0x</option>
+                        </select>
+                    </div>
+                    <div id="image-nav-group" style="display: none; margin-left: 15px; color: #fff; font-size: 14px; align-items: center; gap: 10px;">
+                        <button id="btn-prev-image" class="btn" style="padding: 4px 8px; font-size: 12px; min-width: 0;">Anterior</button>
+                        <span id="image-counter">0/0</span>
+                        <button id="btn-next-image" class="btn" style="padding: 4px 8px; font-size: 12px; min-width: 0;">Siguiente</button>
+                    </div>
                 </div>
                 
                 <!-- Placeholder -->

@@ -8,6 +8,7 @@ from utils.registro import registrar_evento
 from velocidad.geometria import lado_linea, R_ENDPOINT
 from velocidad.logica_difusa import clasificar_velocidad
 from main import _abrir_camara, _guardar_captura, DISTANCIA_REFERENCIA_METROS, URL_STREAM
+from api.email_service import enviar_notificacion_asincrona
 
 ESTADO_VELOCIDAD = 0
 ESTADO_PLACA     = 1
@@ -29,7 +30,7 @@ class RadarPipeline:
         }
         
         self.worker = RecognitionWorker()
-        self.votador = VotadorPlaca()
+        self.votador = VotadorPlaca(min_votos=3, conf_min=0.35)
         
         self.event_callbacks = [] # Callbacks func(type, payload)
         
@@ -43,6 +44,7 @@ class RadarPipeline:
         
         # Controles de reproducción
         self.paused = False
+        self.playback_speed = 1.0
         self.fuente_actual = None
         self.es_archivo = False
         self.veh_bbox = None       # bbox del vehículo al cruzar línea B (para recortar OCR)
@@ -123,17 +125,14 @@ class RadarPipeline:
     def seek(self, delta_segundos):
         if not self.running or not self.cap or not getattr(self, 'es_archivo', False):
             return False
-        pos = self.cap.get(cv2.CAP_PROP_POS_MSEC)
-        nueva_pos = max(0.0, pos + delta_segundos * 1000.0)
-        self.cap.set(cv2.CAP_PROP_POS_MSEC, nueva_pos)
+        fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
+        pos_frames = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+        delta_frames = delta_segundos * fps
+        nueva_pos = max(0.0, pos_frames + delta_frames)
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, nueva_pos)
         
-        # Resetear estado temporal para no mezclar mediciones
-        self.estado = ESTADO_VELOCIDAD
-        self.velocidad_kmh = 0.0
-        self.placa_detectada = ""
-        self.resultado_difuso = None
-        self.worker.reset_lecturas()
-        self.votador.reset()
+        # Le decimos al loop principal que reinicie su estado
+        self.needs_reset = True
         return True
 
     def restart_video(self):
@@ -163,6 +162,8 @@ class RadarPipeline:
         fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=True)
         
         t_a = t_b = 0.0
+        t_placa_inicio = 0.0
+        t_registro_inicio = 0.0
         cruzó_linea_a = cruzó_linea_b = False
         prev_lado_a = prev_lado_b = None
         last_veh_bbox = None
@@ -174,7 +175,29 @@ class RadarPipeline:
         self.captura_guardada = False
         self.evento_registrado = False
         
+        self.needs_reset = False
+        
         while self.running:
+            if getattr(self, 'needs_reset', False):
+                self.needs_reset = False
+                fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=True)
+                t_a = t_b = 0.0
+                t_placa_inicio = 0.0
+                t_registro_inicio = 0.0
+                cruzó_linea_a = cruzó_linea_b = False
+                prev_lado_a = prev_lado_b = None
+                last_veh_bbox = None
+                self.estado = ESTADO_VELOCIDAD
+                self.velocidad_kmh = 0.0
+                self.placa_detectada = ""
+                self.resultado_difuso = None
+                self.captura_guardada = False
+                self.evento_registrado = False
+                self.worker.reset_lecturas()
+                if hasattr(self, 'votador'):
+                    self.votador.reset()
+                self._emit("status", {"state": "ready"})
+                
             if getattr(self, 'paused', False):
                 time.sleep(0.1)
                 continue
@@ -203,7 +226,10 @@ class RadarPipeline:
             #     cv2.circle(frame_display, p2, R_ENDPOINT, color, -1)
 
             if self.estado == ESTADO_VELOCIDAD:
-                mascara = fgbg.apply(frame)
+                # Downscale for faster MOG2
+                scale = 0.5
+                small_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
+                mascara = fgbg.apply(small_frame)
                 _, mask_bin = cv2.threshold(mascara, 200, 255, cv2.THRESH_BINARY)
                 kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
                 mask_clean = cv2.morphologyEx(mask_bin, cv2.MORPH_OPEN, kernel)
@@ -214,8 +240,13 @@ class RadarPipeline:
                 mejor_area = 0
                 for cnt in contornos:
                     area = cv2.contourArea(cnt)
-                    if area > 2000 and area > mejor_area:
-                        bx, by, bw, bh = cv2.boundingRect(cnt)
+                    # Adjust area threshold since the image is scaled by 0.5 (area is 0.25)
+                    if area > 500 and area > mejor_area:
+                        bx_s, by_s, bw_s, bh_s = cv2.boundingRect(cnt)
+                        # Scale bounding box back to original coordinates
+                        bx, by = int(bx_s / scale), int(by_s / scale)
+                        bw, bh = int(bw_s / scale), int(bh_s / scale)
+                        
                         if bh < 25 or bw > bh * 8:
                             continue
                         veh_cx = bx + bw // 2
@@ -229,22 +260,24 @@ class RadarPipeline:
                     lado_b = lado_linea(veh_cx, veh_cy, lb["x1"], lb["y1"], lb["x2"], lb["y2"])
 
                     if not cruzó_linea_a:
-                        if prev_lado_a is not None and prev_lado_a < 0 and lado_a >= 0:
+                        # Primera detección o cruce en cualquier dirección
+                        if prev_lado_a is None or (prev_lado_a * lado_a < 0):
                             t_a = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
                             cruzó_linea_a = True
                         prev_lado_a = lado_a
-                        
+
                     if cruzó_linea_a and not cruzó_linea_b:
-                        if prev_lado_b is not None and prev_lado_b < 0 and lado_b >= 0:
+                        if prev_lado_b is not None and prev_lado_b * lado_b < 0:
                             t_b = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
                             cruzó_linea_b = True
-                            dt = t_b - t_a
+                            dt = abs(t_b - t_a)
                             if dt > 0:
                                 self.velocidad_kmh = round((distancia_m / dt) * 3.6, 2)
                             self.resultado_difuso = clasificar_velocidad(self.velocidad_kmh)
                             self.veh_bbox = last_veh_bbox
                             self.ocr_offset = (0, 0)
                             self.estado = ESTADO_PLACA
+                            t_placa_inicio = time.time()  # reloj real para el timeout
                             self._emit("event", {"type": "velocidad", "velocidad": self.velocidad_kmh, "clasificacion": self.resultado_difuso})
                         prev_lado_b = lado_b
 
@@ -252,29 +285,32 @@ class RadarPipeline:
                 cv2.rectangle(frame_display, (10, 10), (450, 50), (0,0,0), -1)
                 cv2.putText(frame_display, f"V: {self.velocidad_kmh} km/h - BUSCANDO PLACA", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-                # Recortar al área del vehículo para que YOLO no detecte placas
-                # de autos estáticos en el fondo del frame completo.
-                frame_to_ocr = frame
-                if self.veh_bbox is not None:
-                    bx, by, bw, bh = self.veh_bbox
-                    pad_x = int(bw * 0.7)
-                    pad_y = int(bh * 0.7)
-                    cx1 = max(0, bx - pad_x)
-                    cy1 = max(0, by - pad_y)
-                    cx2 = min(ancho, bx + bw + pad_x)
-                    cy2 = min(alto, by + bh + pad_y)
-                    if cx2 > cx1 and cy2 > cy1:
-                        frame_to_ocr = frame[cy1:cy2, cx1:cx2]
-                        self.ocr_offset = (cx1, cy1)
-                self.worker.submit(frame_to_ocr)
+                # Recortar al area del vehiculo para darle a YOLO una imagen
+                # ampliada: la placa ocupa mas porcentaje del frame y es mas facil
+                # de detectar que en la escena completa.
+                ocr_frame = frame
+                ox, oy = 0, 0
+                if last_veh_bbox is not None:
+                    vbx, vby, vbw, vbh = last_veh_bbox
+                    pad_x = int(vbw * 0.5)
+                    pad_y = int(vbh * 0.5)
+                    rx1 = max(0, vbx - pad_x)
+                    ry1 = max(0, vby - pad_y)
+                    rx2 = min(frame.shape[1], vbx + vbw + pad_x)
+                    ry2 = min(frame.shape[0], vby + vbh + pad_y)
+                    ocr_frame = frame[ry1:ry2, rx1:rx2]
+                    ox, oy = rx1, ry1
+                self.ocr_offset = (ox, oy)
+                self.worker.submit(ocr_frame)
 
-                placa_aceptada = ""
+                # Acumular TODAS las lecturas nuevas en el votador. NO aceptar la
+                # primera: el auto recien cruza la linea y los primeros frames son
+                # los mas lejanos/borrosos. Votar entre frames mientras se acerca.
+                conf_alta = 0.0
                 for p, bb, c in self.worker.drenar_lecturas():
-                    # Fast path: una lectura de alta confianza es suficiente
-                    if p and c >= 0.70:
-                        placa_aceptada = p
-                        break
                     self.votador.agregar(p, c)
+                    if p:
+                        conf_alta = max(conf_alta, c)
 
                 _, bbox, _ = self.worker.get_result()
                 if bbox:
@@ -282,8 +318,15 @@ class RadarPipeline:
                     x, y, w, h = bbox
                     cv2.rectangle(frame_display, (x + ox, y + oy), (x + ox + w, y + oy + h), (0, 255, 0), 2)
 
-                if not placa_aceptada:
-                    placa_aceptada = self.votador.consenso()
+                # Aceptar el consenso ponderado cuando hay suficientes lecturas
+                # (>=5): para entonces el voto por confianza ya es estable.
+                placa_aceptada = ""
+                consenso = self.votador.consenso()
+                if consenso and self.votador.n >= 5:
+                    placa_aceptada = consenso
+                # Atajo: una lectura muy confiable (auto cerca y nitido) basta.
+                elif conf_alta >= 0.80 and consenso:
+                    placa_aceptada = consenso
 
                 if placa_aceptada:
                     self.placa_detectada = placa_aceptada
@@ -292,8 +335,9 @@ class RadarPipeline:
                     self.votador.reset()
                     self._emit("event", {"type": "placa", "placa": self.placa_detectada})
 
-                t_ahora = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
-                if t_b > 0 and t_ahora - t_b > 2.5:
+                # Timeout 2.5s: usa lo mejor que haya y libera rapido para no
+                # perder los autos siguientes.
+                elif time.time() - t_placa_inicio > 2.5:
                     mejor, _ = self.votador.mejor_lectura()
                     fallback = self.votador.consenso() or mejor
                     if fallback:
@@ -305,6 +349,7 @@ class RadarPipeline:
                         self.estado = ESTADO_VELOCIDAD
                         cruzó_linea_a = cruzó_linea_b = False
                         t_a = t_b = 0.0
+                        t_placa_inicio = 0.0
                         last_veh_bbox = None
                         self.veh_bbox = None
                         self.ocr_offset = (0, 0)
@@ -318,21 +363,31 @@ class RadarPipeline:
                 if not self.captura_guardada:
                     ruta_cap = _guardar_captura(frame, self.placa_detectada, self.velocidad_kmh, clasif, horas)
                     self.captura_guardada = True
+                    t_registro_inicio = time.time()  # inicia el timer de muestra
                     if not self.evento_registrado:
                         registrar_evento(self.placa_detectada, self.velocidad_kmh, clasif, horas, ruta_cap)
                         self.evento_registrado = True
+                        datos_correo = {
+                            "placa": self.placa_detectada,
+                            "velocidad_kmh": self.velocidad_kmh,
+                            "clasificacion": clasif,
+                            "horas": horas,
+                            "ruta_captura": ruta_cap
+                        }
+                        threading.Thread(target=enviar_notificacion_asincrona, args=(datos_correo,), daemon=True).start()
                         self._emit("event", {"type": "registro_guardado", "placa": self.placa_detectada, "velocidad": self.velocidad_kmh, "clasificacion": clasif, "horas": horas, "captura": ruta_cap})
 
                 cv2.rectangle(frame_display, (10, 10), (500, 170), (0, 0, 0), -1)
                 cv2.putText(frame_display, f"PLACA: {self.placa_detectada}", (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                 cv2.putText(frame_display, f"VELOCIDAD: {self.velocidad_kmh} km/h", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(frame_display, f"ESTADO: {clasif.upper()}", (20, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+                cv2.putText(frame_display, f"ESTADO: {clasif.upper()}", (20, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-                t_ahora2 = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
-                if self.captura_guardada and t_ahora2 - t_b > 3.0:
+                # Mostrar 1.5s reales y luego listo para el siguiente vehiculo
+                if self.captura_guardada and time.time() - t_registro_inicio > 1.5:
                     self.estado = ESTADO_VELOCIDAD
                     cruzó_linea_a = cruzó_linea_b = False
                     t_a = t_b = 0.0
+                    t_placa_inicio = 0.0
                     prev_lado_a = prev_lado_b = None
                     last_veh_bbox = None
                     self.veh_bbox = None
@@ -350,7 +405,8 @@ class RadarPipeline:
 
             if es_archivo:
                 elapsed = time.time() - start_time
-                sleep_time = (delay_ms / 1000.0) - elapsed
+                target_delay = delay_ms / (1000.0 * getattr(self, 'playback_speed', 1.0))
+                sleep_time = target_delay - elapsed
                 if sleep_time > 0:
                     time.sleep(sleep_time)
 

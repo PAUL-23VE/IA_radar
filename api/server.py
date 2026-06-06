@@ -7,6 +7,11 @@ from pydantic import BaseModel
 import json
 import os
 import shutil
+import base64
+import cv2
+import numpy as np
+from typing import List
+from cnn.inferencia import reconocer_placa
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -89,6 +94,42 @@ async def upload_file(file: UploadFile = File(...)):
         return {"success": False, "message": str(e)}
 
 
+@app.post("/api/test-ocr")
+async def test_ocr(files: List[UploadFile] = File(...)):
+    resultados = []
+    for file in files:
+        try:
+            contents = await file.read()
+            nparr = np.frombuffer(contents, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            placa, bbox, conf = reconocer_placa(img)
+            
+            if bbox:
+                x, y, w, h = bbox
+                cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.putText(img, f"{placa} ({conf:.2f})", (x, max(20, y - 10)), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                            
+            ret, buffer = cv2.imencode('.jpg', img)
+            img_b64 = base64.b64encode(buffer).decode('utf-8')
+            
+            resultados.append({
+                "filename": file.filename,
+                "placa": placa,
+                "confianza": conf,
+                "bbox": bbox,
+                "image_b64": img_b64
+            })
+        except Exception as e:
+            resultados.append({
+                "filename": file.filename,
+                "error": str(e)
+            })
+            
+    return {"success": True, "resultados": resultados}
+
+
 class StartRequest(BaseModel):
     fuente: str | int
 
@@ -108,7 +149,8 @@ async def stop_pipeline():
     return {"success": True}
 
 class PlaybackRequest(BaseModel):
-    action: str  # 'pause', 'resume', 'toggle', 'seek_fwd', 'seek_bwd', 'restart'
+    action: str  # 'pause', 'resume', 'toggle', 'seek_fwd', 'seek_bwd', 'restart', 'set_speed'
+    speed: float = 1.0
 
 @app.post("/api/playback")
 async def playback_control(req: PlaybackRequest):
@@ -130,6 +172,9 @@ async def playback_control(req: PlaybackRequest):
     elif req.action == "restart":
         success = pipeline.restart_video()
         return {"success": success}
+    elif req.action == "set_speed":
+        pipeline.playback_speed = float(req.speed)
+        return {"success": True, "speed": pipeline.playback_speed}
     return {"success": False, "message": "Acción desconocida"}
 
 @app.get("/api/status")
