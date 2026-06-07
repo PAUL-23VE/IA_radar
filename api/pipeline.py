@@ -90,14 +90,18 @@ class RadarPipeline:
             
         alto, ancho = frame_init.shape[:2]
         
-        # Iniciar valores por defecto en base al ancho/alto real
+        # Lineas por defecto: dos lineas HORIZONTALES juntas en la zona cercana
+        # (mitad-inferior del cuadro), donde los autos se ven grandes y la placa
+        # es legible. Juntas = el auto cruza ambas en pocos frames -> el track
+        # sobrevive (ByteTrack no pierde el ID) y se mide la velocidad aunque el
+        # trafico vaya lento. El usuario las puede arrastrar para afinar el carril.
         self.estado_lineas["linea_a"] = {
-            "x1": int(ancho * 0.10), "y1": int(alto * 0.80),
-            "x2": int(ancho * 0.70), "y2": int(alto * 0.20)
+            "x1": int(ancho * 0.12), "y1": int(alto * 0.55),
+            "x2": int(ancho * 0.88), "y2": int(alto * 0.55)
         }
         self.estado_lineas["linea_b"] = {
-            "x1": int(ancho * 0.25), "y1": int(alto * 0.90),
-            "x2": int(ancho * 0.85), "y2": int(alto * 0.30)
+            "x1": int(ancho * 0.10), "y1": int(alto * 0.72),
+            "x2": int(ancho * 0.90), "y2": int(alto * 0.72)
         }
 
         self.running = True
@@ -254,30 +258,13 @@ class RadarPipeline:
                     cy = y2
                     bh = y2 - y1
 
-                    # Autos diminutos (lejanos): solo dibujar, sin medir ni OCR.
-                    # Su placa es ilegible y solo consumen CPU.
-                    if bh < MIN_H_TRACK and not tr["registrado"]:
-                        cv2.rectangle(frame_display, (x1, y1), (x2, y2), (130, 130, 130), 1)
-                        continue
-
-                    # OCR de placa SOLO para autos en la zona de medicion (ya
-                    # cruzaron una linea) y no registrados. Asi se SALTAN todos los
-                    # autos PARQUEADOS (nunca cruzan) -> mucho menos lag.
-                    # Crop del frame ORIGINAL full-res; alterna frames por track.
-                    en_zona = tr["crossed_a"] or tr["crossed_b"]
-                    if (en_zona and not tr["registrado"] and bh >= MIN_H_OCR
-                            and (frame_idx + tid) % 2 == 0):
-                        veh_crop = frame[max(0, y1):y2, max(0, x1):x2]
-                        if veh_crop.size:
-                            placa, pbb, conf = reconocer_placa(veh_crop)
-                            # Pondera por TAMAÑO de placa: frames de cerca (placa
-                            # grande, nitida) pesan mas que los lejanos (chica, borrosa).
-                            ph = pbb[3] if pbb else 0
-                            size_w = max(0.3, min(1.6, ph / 40.0))
-                            tr["votador"].agregar(placa, conf * size_w)
-
-                    # Cruce de cada linea de forma INDEPENDIENTE (cualquier orden
-                    # ni direccion). El auto puede entrar ya pasado A, o ir al reves.
+                    # ── Cruce de lineas — SIEMPRE, aun para autos lejanos/chicos ──
+                    # Es barato (solo geometria) y DEBE seguirse desde lejos: los
+                    # autos cruzan la linea A cuando aun estan pequenos (al fondo).
+                    # Si se hiciera tras el gate de tamano, prev_a nunca se setearia
+                    # mientras el auto es chico y se perderia el cruce de A -> el track
+                    # solo cruzaria B -> nunca se mide -> sin evento/correo.
+                    # Orden independiente: el auto puede cruzar A->B o B->A.
                     la_s = lado_linea(cx, cy, la["x1"], la["y1"], la["x2"], la["y2"])
                     lb_s = lado_linea(cx, cy, lb["x1"], lb["y1"], lb["x2"], lb["y2"])
                     if not tr["crossed_a"]:
@@ -299,6 +286,29 @@ class RadarPipeline:
                         tr["t_b_real"] = time.time()
                         if tr["speed"] > 0:
                             self._emit("event", {"type": "velocidad", "velocidad": tr["speed"]})
+
+                    # Autos diminutos (lejanos): ya seguimos su cruce arriba; aqui
+                    # solo evitamos el OCR/registro pesado (placa ilegible) y el
+                    # dibujo grande. Su registro, si midio, lo hace el finalizador.
+                    if bh < MIN_H_TRACK and not tr["registrado"]:
+                        cv2.rectangle(frame_display, (x1, y1), (x2, y2), (130, 130, 130), 1)
+                        continue
+
+                    # OCR de placa SOLO para autos en la zona de medicion (ya
+                    # cruzaron una linea) y no registrados. Asi se SALTAN todos los
+                    # autos PARQUEADOS (nunca cruzan) -> mucho menos lag.
+                    # Crop del frame ORIGINAL full-res; alterna frames por track.
+                    en_zona = tr["crossed_a"] or tr["crossed_b"]
+                    if (en_zona and not tr["registrado"] and bh >= MIN_H_OCR
+                            and (frame_idx + tid) % 2 == 0):
+                        veh_crop = frame[max(0, y1):y2, max(0, x1):x2]
+                        if veh_crop.size:
+                            placa, pbb, conf = reconocer_placa(veh_crop)
+                            # Pondera por TAMAÑO de placa: frames de cerca (placa
+                            # grande, nitida) pesan mas que los lejanos (chica, borrosa).
+                            ph = pbb[3] if pbb else 0
+                            size_w = max(0.3, min(1.6, ph / 40.0))
+                            tr["votador"].agregar(placa, conf * size_w)
 
                     # Registro rapido: cruzo ambas, hay consenso rico (>=4 votos de
                     # cerca) -> registra mientras el auto sigue visible.

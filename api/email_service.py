@@ -26,6 +26,10 @@ class EmailPayload:
 
 
 def send_email(payload: EmailPayload) -> None:
+    import os
+    if os.environ.get("RADAR_NO_EMAIL"):
+        print(f"[MAIL] (deshabilitado RADAR_NO_EMAIL) habria enviado subject={payload.subject!r}")
+        return
     print(f"[MAIL] enviando -> to={payload.to} subject={payload.subject!r} host={settings.SMTP_HOST}:{settings.SMTP_PORT}")
 
     message = EmailMessage()
@@ -178,7 +182,7 @@ def build_detection_html(data: dict):
   <!-- Encabezado -->
   <div style="background:{color_header}; color:#fff; padding:24px 28px;">
     <div style="font-size:11px; letter-spacing:3px; opacity:0.8; margin-bottom:6px;">
-      SISTEMA DE MONITOREO VEHICULAR · UTA
+      SISTEMA DE MONITOREO VEHICULAR · UTA · GRUPO D
     </div>
     <div style="font-size:34px; font-weight:800; letter-spacing:4px; font-family:monospace;">
       {placa_fmt}
@@ -245,8 +249,8 @@ def enviar_notificacion_asincrona(data: dict):
     velocidad = data.get("velocidad_kmh", 0)
     tiempo_sancion = data.get("tiempo_sancion", "")
 
-    # Asunto claro con toda la info
-    asunto = f"[RADAR-UTA] {clasificacion} · {placa} a {float(velocidad):.1f} km/h"
+    # Asunto claro con toda la info (incluye GRUPO D en el titulo)
+    asunto = f"[RADAR-UTA · GRUPO D] {clasificacion} · {placa} a {float(velocidad):.1f} km/h"
     if tiempo_sancion and tiempo_sancion != "Sin sanción":
         asunto += f" · Sanción: {tiempo_sancion}"
 
