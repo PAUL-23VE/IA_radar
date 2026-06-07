@@ -269,8 +269,12 @@ class RadarPipeline:
                             and (frame_idx + tid) % 2 == 0):
                         veh_crop = frame[max(0, y1):y2, max(0, x1):x2]
                         if veh_crop.size:
-                            placa, _bb, conf = reconocer_placa(veh_crop)
-                            tr["votador"].agregar(placa, conf)
+                            placa, pbb, conf = reconocer_placa(veh_crop)
+                            # Pondera por TAMAÑO de placa: frames de cerca (placa
+                            # grande, nitida) pesan mas que los lejanos (chica, borrosa).
+                            ph = pbb[3] if pbb else 0
+                            size_w = max(0.3, min(1.6, ph / 40.0))
+                            tr["votador"].agregar(placa, conf * size_w)
 
                     # Cruce de cada linea de forma INDEPENDIENTE (cualquier orden
                     # ni direccion). El auto puede entrar ya pasado A, o ir al reves.
@@ -373,10 +377,25 @@ class RadarPipeline:
         }
         threading.Thread(target=enviar_notificacion_asincrona,
                          args=(datos_correo,), daemon=True).start()
+
+        # Miniatura JPEG base64 del frame para el historial del frontend.
+        thumb = ""
+        try:
+            h, w = frame.shape[:2]
+            tw = 200
+            th = max(1, int(h * tw / w))
+            small = cv2.resize(frame, (tw, th))
+            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if ok:
+                import base64
+                thumb = "data:image/jpeg;base64," + base64.b64encode(buf).decode("ascii")
+        except Exception:
+            pass
+
         self._emit("event", {"type": "placa", "placa": tr["placa"]})
         self._emit("event", {"type": "registro_guardado", "placa": tr["placa"],
                              "velocidad": tr["speed"], "clasificacion": clasif,
-                             "horas": horas, "captura": ruta_cap})
+                             "horas": horas, "captura": ruta_cap, "thumb": thumb})
 
 # Instancia global para que el servidor la use
 pipeline = RadarPipeline()

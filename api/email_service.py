@@ -9,13 +9,7 @@ from pathlib import Path
 import smtplib
 import ssl
 
-# Configuración quemada para facilitar las pruebas
-SMTP_HOST = "smtp.office365.com"
-SMTP_PORT = 587
-SMTP_USER = "dmanjarres6065@uta.edu.ec"
-SMTP_PASSWORD = "hqgqxvpwpzwjyxyl"
-SMTP_FROM = "dmanjarres6065@uta.edu.ec"
-ENVIO_INFRACCIONES_A = "davidmanjarres2004@gmail.com"
+from config import settings
 
 @dataclass(frozen=True)
 class EmailPayload:
@@ -26,10 +20,10 @@ class EmailPayload:
     inline_images: dict | None = None            # {cid: ruta_absoluta} para <img src="cid:...">
 
 def send_email(payload: EmailPayload) -> None:
-    print(f"[MAIL] enviando -> to={payload.to} subject={payload.subject!r} host={SMTP_HOST}:{SMTP_PORT}")
+    print(f"[MAIL] enviando -> to={payload.to} subject={payload.subject!r} host={settings.SMTP_HOST}:{settings.SMTP_PORT}")
 
     message = EmailMessage()
-    message["From"] = SMTP_FROM
+    message["From"] = settings.SMTP_FROM
     message["To"] = payload.to
     message["Subject"] = payload.subject
     message.set_content(payload.body)            # parte texto plano (fallback)
@@ -48,9 +42,9 @@ def send_email(payload: EmailPayload) -> None:
 
     context = ssl.create_default_context()
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
             server.starttls(context=context)
-            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.send_message(message)
         print(f"[MAIL] OK -> {payload.to}")
     except Exception as e:
@@ -123,7 +117,7 @@ def enviar_notificacion_asincrona(data: dict):
     cuerpo_texto = f"El vehículo {placa} fue detectado a {data.get('velocidad_kmh')} km/h. Clasificación: {clasificacion}."
     
     payload = EmailPayload(
-        to=ENVIO_INFRACCIONES_A,
+        to=settings.ENVIO_INFRACCIONES_A,
         subject=asunto,
         body=cuerpo_texto,
         html=html,

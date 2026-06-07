@@ -54,15 +54,25 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Callback para puente entre pipeline (thread síncrono) y websocket (asíncrono)
+# Loop principal de asyncio, capturado al arrancar el servidor. El pipeline corre
+# en OTRO thread, donde asyncio.get_running_loop() falla; necesitamos esta referencia.
+_main_loop = None
+
+@app.on_event("startup")
+async def _capturar_loop():
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
+
+# Callback puente entre pipeline (thread síncrono) y websocket (asíncrono)
 def on_pipeline_event(event_type, payload):
-    # Esto corre en el thread del pipeline, por lo que usamos asyncio para mandar al loop principal
     msg = {"type": event_type, "payload": payload}
+    if _main_loop is None:
+        return
+    # run_coroutine_threadsafe: agenda la corrutina en el loop principal DESDE
+    # el thread del pipeline de forma segura (create_task no sirve cross-thread).
     try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(manager.broadcast(msg))
-    except RuntimeError:
-        # Si no hay loop corriendo en este thread, buscamos el principal
+        asyncio.run_coroutine_threadsafe(manager.broadcast(msg), _main_loop)
+    except Exception:
         pass
 
 pipeline.on_event(on_pipeline_event)
@@ -133,12 +143,28 @@ async def test_ocr(files: List[UploadFile] = File(...)):
 class StartRequest(BaseModel):
     fuente: str | int
 
+@app.get("/api/config")
+async def get_config():
+    from config import settings
+    from main import URL_STREAM
+    return {
+        "ip_iphone": settings.IP_IPHONE,
+        "puerto": settings.PUERTO,
+        "url_stream": URL_STREAM
+    }
+
 @app.post("/api/start")
 async def start_pipeline(req: StartRequest):
-    # Si la fuente es un número string ("0"), lo parseamos
     fuente = req.fuente
-    if isinstance(fuente, str) and fuente.isdigit():
-        fuente = int(fuente)
+    if isinstance(fuente, str):
+        fuente_strip = fuente.strip()
+        if fuente_strip == "" or fuente_strip.lower() == "default":
+            from main import URL_STREAM
+            fuente = URL_STREAM
+        elif fuente_strip.isdigit():
+            fuente = int(fuente_strip)
+        else:
+            fuente = fuente_strip
         
     success = pipeline.start(fuente=fuente)
     return {"success": success, "message": "Iniciado" if success else "No se pudo iniciar o ya estaba corriendo"}

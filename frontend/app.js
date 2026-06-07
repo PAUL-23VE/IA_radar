@@ -1,5 +1,5 @@
-const API_URL = "http://localhost:8000";
-const WS_URL = "ws://localhost:8000/ws/events";
+const API_URL = window.location.origin;
+const WS_URL = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/ws/events";
 
 // Elements
 const sourceTypeSel = document.getElementById('source-type');
@@ -60,7 +60,7 @@ sourceTypeSel.addEventListener('change', (e) => {
         sourceImageGroup.style.display = 'flex';
     } else {
         sourcePathGroup.style.display = 'flex';
-        sourcePathInput.placeholder = 'http://ip:port/video';
+        sourcePathInput.placeholder = window.defaultUrlStream || 'http://ip:port/video';
     }
 });
 
@@ -231,9 +231,9 @@ btnStart.addEventListener('click', async () => {
         }
     } else if (sourceTypeSel.value === 'stream') {
         fuente = sourcePathInput.value.trim();
+        // Si el campo está vacío, enviamos cadena vacía para que el backend use el valor de .env
         if (!fuente) {
-            showToast("Por favor ingresa una URL válida.");
-            return;
+            fuente = "";
         }
     }
 
@@ -371,8 +371,25 @@ async function checkStatusAndSyncUI() {
     }
 }
 
+async function loadConfig() {
+    try {
+        const res = await fetch(`${API_URL}/api/config`);
+        const config = await res.json();
+        if (config && config.url_stream) {
+            window.defaultUrlStream = config.url_stream;
+            sourcePathInput.value = config.url_stream;
+            sourcePathInput.placeholder = config.url_stream;
+        }
+    } catch (e) {
+        console.error("No se pudo obtener la configuración por defecto:", e);
+    }
+}
+
 // Initial Sync
-window.addEventListener('DOMContentLoaded', checkStatusAndSyncUI);
+window.addEventListener('DOMContentLoaded', () => {
+    checkStatusAndSyncUI();
+    loadConfig();
+});
 
 // WebSocket Connection
 function connectWebSocket() {
@@ -467,15 +484,23 @@ function addEventToList(payload) {
         badgeColor = '#f0a500'; borderColor = 'rgba(240,165,0,0.25)';
     }
 
+    const thumb = payload.thumb || '';
+    const thumbHtml = thumb
+        ? `<img src="${thumb}" style="width:84px; height:54px; object-fit:cover; border-radius:6px; flex-shrink:0; border:1px solid rgba(255,255,255,0.1)">`
+        : '';
+
     const el = document.createElement('div');
-    el.style.cssText = `display:flex; justify-content:space-between; align-items:center; 
+    el.style.cssText = `display:flex; justify-content:space-between; align-items:center; gap:12px;
         padding: 10px 14px; margin-bottom: 8px; border-radius: 8px;
         background: rgba(255,255,255,0.05); border-left: 3px solid ${borderColor};
         animation: slideIn 0.3s ease;`;
     el.innerHTML = `
-        <div style="display:flex; flex-direction:column; gap:2px">
-            <span style="font-size:16px; font-weight:700; font-family:monospace; letter-spacing:2px; color:#fff">${placa}</span>
-            <span style="font-size:11px; color:#aaa">${hora}</span>
+        <div style="display:flex; align-items:center; gap:12px">
+            ${thumbHtml}
+            <div style="display:flex; flex-direction:column; gap:2px">
+                <span style="font-size:16px; font-weight:700; font-family:monospace; letter-spacing:2px; color:#fff">${placa}</span>
+                <span style="font-size:11px; color:#aaa">${hora}</span>
+            </div>
         </div>
         <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px">
             <span style="font-size:12px; font-weight:700; color:${badgeColor}; text-transform:uppercase">${clasif}</span>

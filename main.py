@@ -41,8 +41,9 @@ from registro      import registrar_evento
 from camara        import URL_STREAM
 from reconocedor   import RecognitionWorker, VotadorPlaca
 from geometria     import R_ENDPOINT, lado_linea, callback_mouse_lineas
+from config        import settings
 
-DISTANCIA_REFERENCIA_METROS = 5.0
+DISTANCIA_REFERENCIA_METROS = settings.DISTANCIA_REFERENCIA_METROS
 
 ESTADO_VELOCIDAD = 0
 ESTADO_PLACA     = 1

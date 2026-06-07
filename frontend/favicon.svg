@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="radar-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#ef4444" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Main outer circle / lens frame -->
+  <rect x="2" y="2" width="28" height="28" rx="8" fill="#0f1115" stroke="url(#radar-grad)" stroke-width="2" />
+  <!-- Radar sweep line -->
+  <line x1="16" y1="16" x2="26" y2="8" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" opacity="0.8" />
+  <!-- Concentric radar circles -->
+  <circle cx="16" cy="16" r="10" fill="none" stroke="rgba(59, 130, 246, 0.2)" stroke-width="1" />
+  <circle cx="16" cy="16" r="6" fill="none" stroke="rgba(59, 130, 246, 0.3)" stroke-width="1" />
+  <!-- Target blip (glowing green/red) -->
+  <circle cx="21" cy="12" r="2.5" fill="#10b981" filter="url(#glow)" />
+  <!-- Center dot -->
+  <circle cx="16" cy="16" r="2.5" fill="#ef4444" />
+</svg>

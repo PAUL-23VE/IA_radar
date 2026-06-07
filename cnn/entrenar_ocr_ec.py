@@ -28,6 +28,8 @@ np.random.seed(42)
 
 DATASET_REAL  = ROOT / "data" / "datasets" / "Dataset_OCR_Placas"
 DATASET_SYNTH = ROOT / "data" / "datasets" / "dataset_propio_ttf"
+DATASET_EC    = ROOT / "data" / "datasets" / "dataset_chars_ec"   # chars EC REALES (placas etiquetadas)
+EC_OVERSAMPLE = 25            # repite el set EC real para darle peso (con augment distinto c/copia)
 RUTA_MODELO   = ROOT / "models" / "ocr_char.pt" # Guardamos como el principal
 IMG_SIZE   = 64
 EPOCHS     = 60
@@ -66,8 +68,12 @@ def transforms_eval():
     ])
 
 def cargar_imagefolder(raiz: Path, tf):
-    """Carga ImageFolder forzando el orden de clases CLASSES."""
-    ds = datasets.ImageFolder(str(raiz), transform=tf)
+    """Carga ImageFolder forzando el orden de clases CLASSES.
+
+    allow_empty=True: el dataset EC real tiene clases sin muestras (N,O,S,W...);
+    se permiten carpetas vacías para mantener el mapeo completo de 36 clases.
+    """
+    ds = datasets.ImageFolder(str(raiz), transform=tf, allow_empty=True)
     assert ds.classes == CLASSES, f"Clases inesperadas en {raiz}: {ds.classes}"
     return ds
 
@@ -118,6 +124,15 @@ def entrenar():
         print(f"Sintético TTF: {len(partes[-1])} imgs")
     else:
         print("[WARN] No existe dataset_propio_ttf; entrenando solo con reales.")
+    # Chars EC REALES (de placas etiquetadas a mano). Pocos pero cierran el domain
+    # gap del font real. Se OVERSAMPLEAN para que pesen; cada copia recibe augment
+    # distinto, generando variedad a partir de pocas muestras.
+    if DATASET_EC.exists():
+        ec_ds = cargar_imagefolder(DATASET_EC, tf_tr)
+        partes.extend([ec_ds] * EC_OVERSAMPLE)
+        print(f"Chars EC reales: {len(ec_ds)} imgs × {EC_OVERSAMPLE} = {len(ec_ds)*EC_OVERSAMPLE}")
+    else:
+        print("[WARN] No existe dataset_chars_ec; sin chars EC reales.")
     ds_train = ConcatDataset(partes)
     ds_val   = cargar_imagefolder(DATASET_REAL / "valid", tf_ev)
     ds_test  = cargar_imagefolder(DATASET_REAL / "test", tf_ev)
