@@ -446,17 +446,14 @@ function handleEvent(msg) {
                 currentClassificationEl.style.color = '#ef4444';
                 plateCard.className = 'card danger';
                 showToast(`🚨 MULTA: ${payload.placa} a ${vel} km/h — ${sancion}`);
-            } else if (clasif === 'advertencia') {
-                currentClassificationEl.style.color = '#f59e0b';
-                plateCard.className = 'card warning';
-                showToast(`⚠️ Advertencia: ${payload.placa} a ${vel} km/h — ${sancion}`);
             } else if (clasif === 'felicitacion') {
                 currentClassificationEl.style.color = '#10b981';
                 plateCard.className = 'card success';
                 showToast(`✅ Velocidad OK: ${payload.placa} a ${vel} km/h`);
-            } else {
+            } else {  // normal
                 currentClassificationEl.style.color = '#3b82f6';
                 plateCard.className = 'card';
+                showToast(`🔵 Normal: ${payload.placa} a ${vel} km/h`);
             }
 
             addEventToList(payload);
@@ -503,6 +500,8 @@ const modalSpeed     = document.getElementById('modal-speed');
 const modalClasif    = document.getElementById('modal-clasif');
 const modalSancion   = document.getElementById('modal-sancion');
 const modalHora      = document.getElementById('modal-hora');
+const modalChart        = document.getElementById('modal-chart');
+const modalChartWrapper = document.getElementById('modal-chart-wrapper');
 
 const CLASIF_BADGE_COLORS = {
     felicitacion: { bg: 'rgba(16,185,129,0.2)', color: '#10b981' },
@@ -526,6 +525,17 @@ function openModal(data) {
     modalClasif.style.cssText = `background:${colors.bg}; color:${colors.color}; padding:0.25rem 0.75rem; border-radius:999px;`;
     modalSancion.textContent = sancion;
     modalHora.textContent    = hora;
+
+    // Gráfica del razonamiento difuso (si el backend la envió)
+    if (modalChart && modalChartWrapper) {
+        if (data.chart) {
+            modalChart.src = data.chart;
+            modalChartWrapper.style.display = 'block';
+        } else {
+            modalChart.removeAttribute('src');
+            modalChartWrapper.style.display = 'none';
+        }
+    }
 
     eventModal.style.display = 'flex';
     document.body.style.overflow = 'hidden';

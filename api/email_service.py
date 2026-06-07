@@ -127,6 +127,25 @@ def build_detection_html(data: dict):
           <div style="font-size:11px; color:#aaa; margin-top:6px;">Captura del vehículo al cruzar la línea B</div>
         </div>"""
 
+    # Gráfica del razonamiento difuso (membresías + defuzzificación) como adjunto inline
+    grafica_html = ""
+    ruta_graf = data.get("ruta_grafica")
+    if ruta_graf:
+        cid_g = "grafica_difuso"
+        image_map[cid_g] = ruta_graf
+        grafica_html = f"""
+        <h3 style="font-size:14px; font-weight:700; color:#333; margin:24px 0 12px;
+                   text-transform:uppercase; letter-spacing:1px; border-bottom:2px solid #eee; padding-bottom:8px;">
+          Razonamiento de Lógica Difusa
+        </h3>
+        <div style="text-align:center; margin:8px 0;">
+          <img src="cid:{cid_g}" alt="Inferencia difusa"
+               style="max-width:100%; border:1px solid #eee; border-radius:10px;">
+          <div style="font-size:11px; color:#aaa; margin-top:6px;">
+            Membresías de velocidad y horas · centroide = sanción defuzzificada
+          </div>
+        </div>"""
+
     # Fila de sanción (solo si aplica)
     if horas > 0:
         sancion_fila = f"""
@@ -192,14 +211,15 @@ def build_detection_html(data: dict):
       <tr>
         <td style="padding:10px 12px; color:#777; border-bottom:1px solid #f0f0f0;">Rango de Velocidad</td>
         <td style="padding:10px 12px; border-bottom:1px solid #f0f0f0; color:#555;">
-          {"0 – 10 km/h (Zona segura)" if velocidad <= 10 else
+          {"0 – 10 km/h (Felicitación · zona segura)" if velocidad <= 10 else
            "10 – 20 km/h (Velocidad normal)" if velocidad <= 20 else
-           "20 – 30 km/h (Exceso leve)" if velocidad <= 30 else
-           "30 – 40 km/h (Exceso grave)"}
+           "> 20 km/h (Multa · exceso de velocidad)"}
         </td>
       </tr>
       {sancion_fila}
     </table>
+
+    {grafica_html}
 
     {_firma_html_footer()}
   </div>

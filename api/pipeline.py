@@ -6,7 +6,7 @@ import numpy as np
 from utils.reconocedor import RecognitionWorker, VotadorPlaca
 from utils.registro import registrar_evento
 from velocidad.geometria import lado_linea, R_ENDPOINT
-from velocidad.logica_difusa import clasificar_velocidad
+from velocidad.logica_difusa import clasificar_velocidad, _render_inferencia_png
 from main import _abrir_camara, _guardar_captura, DISTANCIA_REFERENCIA_METROS, URL_STREAM
 from api.email_service import enviar_notificacion_asincrona
 
@@ -372,10 +372,29 @@ class RadarPipeline:
 
         ruta_cap = _guardar_captura(frame, tr["placa"], tr["speed"], clasif, horas)
         registrar_evento(tr["placa"], tr["speed"], clasif, horas, ruta_cap)
+
+        # Gráfica del razonamiento difuso (Mamdani) — se renderiza UNA vez:
+        #   - bytes → archivo PNG para adjuntar inline en el correo (cid)
+        #   - bytes → data-URI base64 para el modal del frontend
+        chart_uri = ""
+        ruta_grafica = ""
+        try:
+            png = _render_inferencia_png(tr["speed"])
+            import base64 as _b64
+            chart_uri = "data:image/png;base64," + _b64.b64encode(png).decode("ascii")
+            if ruta_cap:
+                import os
+                ruta_grafica = os.path.splitext(ruta_cap)[0] + "_difuso.png"
+                with open(ruta_grafica, "wb") as _f:
+                    _f.write(png)
+        except Exception as e:
+            print(f"[difuso] no se pudo graficar: {e}")
+
         datos_correo = {
             "placa": tr["placa"], "velocidad_kmh": tr["speed"],
             "clasificacion": clasif, "horas": horas,
             "tiempo_sancion": tiempo_sancion, "ruta_captura": ruta_cap,
+            "ruta_grafica": ruta_grafica,
         }
         threading.Thread(target=enviar_notificacion_asincrona,
                          args=(datos_correo,), daemon=True).start()
@@ -404,7 +423,8 @@ class RadarPipeline:
             "tiempo_sancion": tiempo_sancion,
             "captura": ruta_cap,
             "thumb": thumb,
-            "ts": __import__('time').time(),
+            "chart": chart_uri,
+            "ts": time.time(),
         })
 
 # Instancia global para que el servidor la use
