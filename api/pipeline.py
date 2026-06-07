@@ -363,6 +363,7 @@ class RadarPipeline:
         difuso = clasificar_velocidad(tr["speed"])
         clasif = difuso["clasificacion"]
         horas = difuso["horas_indisponibilidad"]
+        tiempo_sancion = difuso["tiempo_sancion"]
 
         # Estado para el panel lateral (ultimo evento).
         self.velocidad_kmh = tr["speed"]
@@ -373,19 +374,20 @@ class RadarPipeline:
         registrar_evento(tr["placa"], tr["speed"], clasif, horas, ruta_cap)
         datos_correo = {
             "placa": tr["placa"], "velocidad_kmh": tr["speed"],
-            "clasificacion": clasif, "horas": horas, "ruta_captura": ruta_cap,
+            "clasificacion": clasif, "horas": horas,
+            "tiempo_sancion": tiempo_sancion, "ruta_captura": ruta_cap,
         }
         threading.Thread(target=enviar_notificacion_asincrona,
                          args=(datos_correo,), daemon=True).start()
 
-        # Miniatura JPEG base64 del frame para el historial del frontend.
+        # Miniatura JPEG base64 del frame (resolución media para la grilla del frontend).
         thumb = ""
         try:
             h, w = frame.shape[:2]
-            tw = 200
+            tw = 320
             th = max(1, int(h * tw / w))
             small = cv2.resize(frame, (tw, th))
-            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ok:
                 import base64
                 thumb = "data:image/jpeg;base64," + base64.b64encode(buf).decode("ascii")
@@ -393,9 +395,17 @@ class RadarPipeline:
             pass
 
         self._emit("event", {"type": "placa", "placa": tr["placa"]})
-        self._emit("event", {"type": "registro_guardado", "placa": tr["placa"],
-                             "velocidad": tr["speed"], "clasificacion": clasif,
-                             "horas": horas, "captura": ruta_cap, "thumb": thumb})
+        self._emit("event", {
+            "type": "registro_guardado",
+            "placa": tr["placa"],
+            "velocidad": tr["speed"],
+            "clasificacion": clasif,
+            "horas": horas,
+            "tiempo_sancion": tiempo_sancion,
+            "captura": ruta_cap,
+            "thumb": thumb,
+            "ts": __import__('time').time(),
+        })
 
 # Instancia global para que el servidor la use
 pipeline = RadarPipeline()

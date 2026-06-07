@@ -62,6 +62,7 @@ DIR_CAPTURAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs
 
 def _guardar_captura(frame: np.ndarray, placa: str, velocidad: float,
                      clasificacion: str, horas: int) -> str:
+    from velocidad.logica_difusa import formatear_tiempo_sancion
     os.makedirs(DIR_CAPTURAS, exist_ok=True)
     ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
     nombre    = f"{placa.replace('-', '')}_{ts}.jpg"
@@ -72,23 +73,28 @@ def _guardar_captura(frame: np.ndarray, placa: str, velocidad: float,
 
     # Fondo semitransparente
     overlay = img.copy()
-    cv2.rectangle(overlay, (0, 0), (w, 90), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, 0.55, img, 0.45, 0, img)
+    cv2.rectangle(overlay, (0, 0), (w, 100), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.6, img, 0.4, 0, img)
 
-    color_estado = (0, 0, 255) if clasificacion == "multa" else \
-                   (0, 255, 255) if clasificacion == "normal" else (0, 255, 0)
+    color_estado = {
+        "multa":       (0, 0, 255),
+        "advertencia": (0, 165, 255),
+        "normal":      (0, 255, 255),
+        "felicitacion":(0, 255, 0),
+    }.get(clasificacion, (200, 200, 200))
 
     cv2.putText(img, f"PLACA: {placa}",
-                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
     cv2.putText(img, f"VELOCIDAD: {velocidad:.1f} km/h",
-                (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    etiqueta = clasificacion.upper()
-    if clasificacion == "multa":
-        etiqueta += f"  ({horas}h indisponible)"
-    cv2.putText(img, f"ESTADO: {etiqueta}",
-                (10, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_estado, 2)
+                (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-    cv2.putText(img, ts, (w - 180, h - 10),
+    etiqueta = clasificacion.upper()
+    if horas > 0:
+        etiqueta += f"  [{formatear_tiempo_sancion(horas)}]"
+    cv2.putText(img, f"ESTADO: {etiqueta}",
+                (10, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color_estado, 2)
+
+    cv2.putText(img, ts, (w - 185, h - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
 
     cv2.imwrite(ruta, img)

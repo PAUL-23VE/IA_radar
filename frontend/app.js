@@ -436,21 +436,27 @@ function handleEvent(msg) {
         }
         else if (evType === 'registro_guardado') {
             const clasif = (payload.clasificacion || 'normal').toLowerCase();
+            const vel = parseFloat(payload.velocidad || 0).toFixed(1);
+            const sancion = payload.tiempo_sancion || 'Sin sanción';
             currentPlateEl.textContent = payload.placa;
-            currentSpeedEl.textContent = parseFloat(payload.velocidad).toFixed(1);
+            currentSpeedEl.textContent = vel;
             currentClassificationEl.textContent = clasif.toUpperCase();
 
-            if (clasif === 'multa' || clasif === 'temerario') {
-                currentClassificationEl.style.color = '#ff4d4d';
+            if (clasif === 'multa') {
+                currentClassificationEl.style.color = '#ef4444';
                 plateCard.className = 'card danger';
-                showToast(`⚠️ INFRACCION: ${payload.placa} a ${parseFloat(payload.velocidad).toFixed(1)} km/h`);
+                showToast(`🚨 MULTA: ${payload.placa} a ${vel} km/h — ${sancion}`);
             } else if (clasif === 'advertencia') {
-                currentClassificationEl.style.color = '#f0a500';
+                currentClassificationEl.style.color = '#f59e0b';
                 plateCard.className = 'card warning';
-                showToast(`⚠️ Advertencia: ${payload.placa} a ${parseFloat(payload.velocidad).toFixed(1)} km/h`);
-            } else {
-                currentClassificationEl.style.color = '#00e676';
+                showToast(`⚠️ Advertencia: ${payload.placa} a ${vel} km/h — ${sancion}`);
+            } else if (clasif === 'felicitacion') {
+                currentClassificationEl.style.color = '#10b981';
                 plateCard.className = 'card success';
+                showToast(`✅ Velocidad OK: ${payload.placa} a ${vel} km/h`);
+            } else {
+                currentClassificationEl.style.color = '#3b82f6';
+                plateCard.className = 'card';
             }
 
             addEventToList(payload);
@@ -470,48 +476,119 @@ function handleEvent(msg) {
     }
 }
 
-function addEventToList(payload) {
-    const clasif = (payload.clasificacion || 'normal').toLowerCase();
-    const vel = parseFloat(payload.velocidad).toFixed(1);
-    const placa = payload.placa || '---';
-    const hora = new Date().toLocaleTimeString('es-EC', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+// ────────────────────────────────────────────
+// Events Grid — Count
+// ────────────────────────────────────────────
+let totalEvents = 0;
+const eventsCounterEl = document.getElementById('events-counter');
+const eventsEmptyEl   = document.getElementById('events-empty');
 
-    let badgeColor = '#00e676';
-    let borderColor = 'rgba(0,230,118,0.25)';
-    if (clasif === 'multa' || clasif === 'temerario') {
-        badgeColor = '#ff4d4d'; borderColor = 'rgba(255,77,77,0.25)';
-    } else if (clasif === 'advertencia') {
-        badgeColor = '#f0a500'; borderColor = 'rgba(240,165,0,0.25)';
+function updateEventsCounter() {
+    totalEvents++;
+    if (eventsCounterEl) {
+        eventsCounterEl.textContent = `${totalEvents} evento${totalEvents !== 1 ? 's' : ''}`;
     }
+    if (eventsEmptyEl) eventsEmptyEl.style.display = 'none';
+}
 
-    const thumb = payload.thumb || '';
-    const thumbHtml = thumb
-        ? `<img src="${thumb}" style="width:84px; height:54px; object-fit:cover; border-radius:6px; flex-shrink:0; border:1px solid rgba(255,255,255,0.1)">`
-        : '';
+// ────────────────────────────────────────────
+// Modal Zoom
+// ────────────────────────────────────────────
+const eventModal     = document.getElementById('event-modal');
+const modalBackdrop  = document.getElementById('modal-backdrop');
+const modalClose     = document.getElementById('modal-close');
+const modalImg       = document.getElementById('modal-img');
+const modalPlate     = document.getElementById('modal-plate');
+const modalSpeed     = document.getElementById('modal-speed');
+const modalClasif    = document.getElementById('modal-clasif');
+const modalSancion   = document.getElementById('modal-sancion');
+const modalHora      = document.getElementById('modal-hora');
 
-    const el = document.createElement('div');
-    el.style.cssText = `display:flex; justify-content:space-between; align-items:center; gap:12px;
-        padding: 10px 14px; margin-bottom: 8px; border-radius: 8px;
-        background: rgba(255,255,255,0.05); border-left: 3px solid ${borderColor};
-        animation: slideIn 0.3s ease;`;
-    el.innerHTML = `
-        <div style="display:flex; align-items:center; gap:12px">
-            ${thumbHtml}
-            <div style="display:flex; flex-direction:column; gap:2px">
-                <span style="font-size:16px; font-weight:700; font-family:monospace; letter-spacing:2px; color:#fff">${placa}</span>
-                <span style="font-size:11px; color:#aaa">${hora}</span>
+const CLASIF_BADGE_COLORS = {
+    felicitacion: { bg: 'rgba(16,185,129,0.2)', color: '#10b981' },
+    normal:       { bg: 'rgba(59,130,246,0.2)',  color: '#3b82f6' },
+    advertencia:  { bg: 'rgba(245,158,11,0.2)',  color: '#f59e0b' },
+    multa:        { bg: 'rgba(239,68,68,0.2)',    color: '#ef4444' },
+};
+
+function openModal(data) {
+    const clasif  = (data.clasificacion || 'normal').toLowerCase();
+    const vel     = parseFloat(data.velocidad || 0).toFixed(1);
+    const placa   = data.placa || '---';
+    const sancion = data.tiempo_sancion || 'Sin sanción';
+    const hora    = data.hora || new Date().toLocaleTimeString('es-EC', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    const colors  = CLASIF_BADGE_COLORS[clasif] || CLASIF_BADGE_COLORS.normal;
+
+    modalImg.src     = data.thumb || '';
+    modalPlate.textContent = placa;
+    modalSpeed.textContent = `${vel} km/h`;
+    modalClasif.textContent  = clasif.toUpperCase();
+    modalClasif.style.cssText = `background:${colors.bg}; color:${colors.color}; padding:0.25rem 0.75rem; border-radius:999px;`;
+    modalSancion.textContent = sancion;
+    modalHora.textContent    = hora;
+
+    eventModal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+}
+
+function closeModal() {
+    eventModal.style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+if (modalClose)   modalClose.addEventListener('click', closeModal);
+if (modalBackdrop) modalBackdrop.addEventListener('click', closeModal);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+// ────────────────────────────────────────────
+// Add event card to grid
+// ────────────────────────────────────────────
+function addEventToList(payload) {
+    const clasif  = (payload.clasificacion || 'normal').toLowerCase();
+    const vel     = parseFloat(payload.velocidad || 0).toFixed(1);
+    const placa   = payload.placa || '---';
+    const sancion = payload.tiempo_sancion || 'Sin sanción';
+    const hora    = new Date().toLocaleTimeString('es-EC', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+    updateEventsCounter();
+
+    // Store hora in payload for modal
+    payload.hora = hora;
+
+    const card = document.createElement('div');
+    card.className = `event-card clasif-${clasif}`;
+    card.title = 'Clic para ampliar';
+
+    const thumbHtml = payload.thumb
+        ? `<img class="event-card-thumb" src="${payload.thumb}" alt="Captura">`
+        : `<div class="event-card-thumb-placeholder">📷</div>`;
+
+    const hasSancion = sancion && sancion !== 'Sin sanción';
+
+    card.innerHTML = `
+        ${thumbHtml}
+        <div class="event-card-body">
+            <div class="event-card-plate">${placa}</div>
+            <div class="event-card-row">
+                <span class="event-card-speed">${vel} km/h</span>
+                <span class="event-card-badge badge-${clasif}">${clasif.slice(0,4).toUpperCase()}</span>
             </div>
-        </div>
-        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px">
-            <span style="font-size:12px; font-weight:700; color:${badgeColor}; text-transform:uppercase">${clasif}</span>
-            <span style="font-size:13px; color:#ddd">${vel} <span style="font-size:10px;color:#aaa">km/h</span></span>
+            <div class="event-card-sancion${hasSancion ? ' has-sancion' : ''}">
+                ${hasSancion ? '⏱ ' + sancion : 'Sin sanción'}
+            </div>
+            <div class="event-card-time">${hora}</div>
         </div>
     `;
 
-    eventsListEl.prepend(el);
-    // Mantener maximo 10 eventos
-    while (eventsListEl.children.length > 10) {
-        eventsListEl.lastChild.remove();
+    card.addEventListener('click', () => openModal(payload));
+
+    // Insertar al INICIO (más reciente a la izquierda)
+    eventsListEl.insertBefore(card, eventsListEl.firstChild);
+
+    // Mantener máximo 20 eventos en la grilla
+    while (eventsListEl.querySelectorAll('.event-card').length > 20) {
+        const last = eventsListEl.querySelector('.event-card:last-child');
+        if (last) last.remove();
     }
 }
 
