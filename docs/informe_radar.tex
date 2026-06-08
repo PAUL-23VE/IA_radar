@@ -153,6 +153,59 @@ c_i =
 Si la CNN arroja $p(0)=0.8, p(O)=0.2$ en la posici\'on $i=1$, el sistema fuerza la decodificaci\'on a $O$, corrigiendo el error intr\'inseco del modelo.
 
 % ================================================================
+\section{Fundamentos Te\'oricos de Machine Learning y Deep Learning}
+% ================================================================
+
+\subsection{Machine Learning Cl\'asico vs Deep Learning}
+En el **Machine Learning cl\'asico** (como SVMs o Random Forests), los ingenieros deb\'ian aplicar \emph{Feature Engineering} manual: extraer m\'etricas de la imagen como gradientes HOG o SIFT y pasarlas al algoritmo.
+El **Deep Learning** revolucion\'o esto usando redes neuronales profundas que aprenden la extracci\'on de caracter\'isticas \textbf{y} la clasificaci\'on de manera simult\'anea y autom\'atica (*End-to-End learning de representaciones*). La red aprende qu\'e es lo m\'as \'util mirar.
+
+\subsection{Conceptos Nucleares de Entrenamiento}
+\begin{itemize}
+    \item \textbf{Backpropagation y la Regla de la Cadena:} El modelo hace una predicci\'on y calcula el error (P\'erdida). \emph{Backpropagation} aplica c\'alculo diferencial (regla de la cadena de derivadas parciales) desde la salida hacia la entrada para calcular c\'omo cada peso de la red contribuy\'o al error, y los ajusta (Descenso del Gradiente).
+    \item \textbf{Funciones de Activaci\'on (ReLU vs Sigmoide):} Las redes necesitan no-linealidad. La \emph{Sigmoide} (curva en S) satura en 0 y 1, causando que sus derivadas sean casi cero en los extremos (el mortal \textbf{Vanishing Gradient Problem}), impidiendo que las redes profundas aprendan. Usamos \textbf{ReLU} ($f(x) = \max(0, x)$) porque su derivada es 1 si $x>0$, permitiendo que el gradiente fluya intacto hacia las capas iniciales.
+    \item \textbf{Batch Normalization:} En redes profundas, la distribuci\'on de las entradas a cada capa cambia constantemente mientras se actualizan los pesos (\emph{Internal Covariate Shift}). \emph{BatchNorm} normaliza (media 0, varianza 1) las activaciones por cada \emph{batch}, estabilizando el entrenamiento y permitiendo Tasas de Aprendizaje (LR) m\'as altas.
+    \item \textbf{Dropout:} Es una regularizaci\'on extrema. Durante el entrenamiento, apagamos aleatoriamente (ej. 50\%) algunas neuronas. Esto obliga a la red a \textbf{no depender} de una sola neurona o caracter\'istica para predecir, haci\'endola robusta y mitigando el \emph{Overfitting}.
+\end{itemize}
+
+% ================================================================
+\section{Anatom\'ia Profunda de una CNN (Convolutional Neural Network)}
+% ================================================================
+
+\subsection{Convoluciones vs Redes Densas}
+Si una imagen tiene $48 \times 48 = 2304$ p\'ixeles, una primera capa densa oculta con 1000 neuronas requerir\'ia $2.3$ Millones de pesos. Adem\'as, destruir\'ia la estructura topol\'ogica 2D de la imagen (un p\'ixel vecino al otro).
+Las \textbf{Convoluciones} aplican un \emph{filtro/kernel} peque\~no (ej. $3 \times 3$) que se desliza por la imagen. Esto tiene dos superpoderes:
+1. \textbf{Par\'ametros Compartidos:} El mismo filtro ($3 \times 3 = 9$ pesos) busca un patr\'on en toda la imagen.
+2. \textbf{Invarianza Espacial:} Si el filtro detecta un barde vertical en la esquina, podr\'a detectarlo igual en el centro.
+
+\subsection{Jerarqu\'ia de Caracter\'isticas}
+A medida que la red profundiza:
+\begin{itemize}
+    \item \textbf{Capas Iniciales:} Aprenden filtros de Gabor (bordes, l\'ineas, gradientes).
+    \item \textbf{Capas Medias:} Combinan l\'ineas para detectar texturas o formas b\'asicas (esquinas, curvas de una "C").
+    \item \textbf{Capas Profundas:} Detectan partes de objetos complejos (el bucle de un "8", el cruce de una "X").
+\end{itemize}
+
+\subsection{MaxPooling y Arquitectura ResNet}
+El \textbf{MaxPooling} ($2\times2$) reduce la imagen a la mitad, seleccionando el p\'ixel de mayor activaci\'on en un vecindario. Esto otorga invarianza a pequeñas traslaciones.
+
+El clasificador \texttt{CNNPlacas} usa bloques \textbf{Residuales (ResNet)}. En redes est\'andar, la informaci\'on se degrada al pasar por muchas capas. ResNet introduce una \textbf{Conexi\'on de Salto} (\emph{Skip Connection}): la entrada $x$ se suma directamente a la salida de la capa $\mathcal{F}(x)$, es decir $H(x) = \mathcal{F}(x) + x$. Esto permite a la red aprender \emph{residuos} y garantiza que el gradiente fluya directamente hacia atr\'as durante el \emph{Backpropagation}.
+
+% ================================================================
+\section{Profundizaci\'on en YOLOv11 (You Only Look Once)}
+% ================================================================
+
+\subsection{Modelos de 1 Etapa vs 2 Etapas}
+Modelos cl\'asicos como \textbf{Faster R-CNN} son de dos etapas: primero proponen miles de "Regiones Candidatas" y luego clasifican cada regi\'on. Son lentos.
+\textbf{YOLO} es de 1 etapa. Trata la detecci\'on como un problema de \emph{regresi\'on} en un solo paso. Toma la imagen, la divide en una grilla $S \times S$ y de una sola vez la red predice Bounding Boxes, Confianza y Probabilidad de Clases. Es extremadamente r\'apido y apto para Tiempo Real.
+
+\subsection{Non-Maximum Suppression (NMS)}
+Como YOLO predice sobre una grilla, a menudo arroja 5 cajas superpuestas para el mismo veh\'iculo. \textbf{NMS} soluciona esto:
+1. Toma la caja con mayor confianza.
+2. Descarta todas las dem\'as cajas que tengan un IoU (Intersection over Union) muy alto con la caja ganadora (ej. $>0.45$).
+3. Repite para el siguiente objeto.
+
+% ================================================================
 \section{L\'ogica Difusa: Las Matem\'aticas de la Sanci\'on}
 % ================================================================
 
@@ -247,5 +300,17 @@ Esta secci\'on contiene el n\'ucleo para la defensa. El profesor intentar\'a bus
 \begin{pregunta}{¿Qu\'e es el hiperpar\'ametro 'IoU' en YOLO y por qu\'e es crucial para su tracker?}
     \textbf{Respuesta:} "IoU (Intersection over Union) es la medida de solapamiento entre dos Bounding Boxes (Área de Intersecci\'on dividida para el Área de Uni\'on). El tracker ByteTrack lo usa para el \emph{Data Association}: si en el frame $T$ hay una caja de auto y en el frame $T+1$ hay otra, el algoritmo calcula su IoU espacial. Si es muy alto (las cajas se solapan), el tracker concluye que es exactamente \textbf{el mismo auto} movi\'endose y le mantiene su ID único. Sin IoU, el tracker no sabr\'ia c\'omo unir las detecciones entre \emph{frames}."
 \end{pregunta}
+
+\begin{trampa}{Si su modelo tiene 1.2 millones de par\'ametros y el dataset de entrenamiento tiene 50,000 im\'agenes, ¿no se aprendi\'o el dataset de memoria (Overfitting)?}
+    \textbf{Respuesta:} "No, porque aplicamos fuertes t\'ecnicas de \textbf{Regularizaci\'on}. Si bien los par\'ametros superan a las im\'agenes, usamos \textbf{Data Augmentation} en tiempo real (rotaciones aleatorias, escalado, ruido de brillo), lo que hace que la red nunca vea exactamente la misma imagen dos veces. Adem\'as, usamos \textbf{Dropout} en la arquitectura, obligando a que la red no pueda depender de caminos neuronales espec\'ificos, y \textbf{Weight Decay} (AdamW) que penaliza pesos muy grandes. Esto se comprueba porque nuestra precisi\'on en el set de Entrenamiento es similar a la del set de Validaci\'on/Test: si hubiera overfitting, tendr\'iamos 99\% en entrenamiento y 70\% en Test, pero tenemos $\sim 91\%$ en ambos."
+\end{trampa}
+
+\begin{pregunta}{¿Qu\'e pasar\'ia si paso una imagen de la placa completamente Negra (pixeles en 0) a su modelo CNN?}
+    \textbf{Respuesta:} "La red har\'ia los c\'alculos matem\'aticos normales (multiplicar 0 por los pesos), lo que resultar\'ia en que el sumatorio de la primera capa oculta solo depender\'ia de los \textbf{Bias} (sesgos) de las neuronas. Eventualmente, llegaremos a los \emph{logits} finales. Al aplicar la funci\'on \textbf{Softmax}, se obtendr\'ia un vector de probabilidades que no tendr\'a sentido, pero cuya suma dar\'a exactamente 1.0. Probablemente arrojar\'a la clase con el sesgo m\'as alto aprendido durante el entrenamiento, pero con una confianza (probabilidad) sumamente baja y repartida entre todas las clases, evidenciando que no hay un patr\'on."
+\end{pregunta}
+
+\begin{trampa}{Dicen que usan un 'Umbral Gaussiano'. Si la sombra oscurece la mitad de la placa, el Gaussiano bajar\'a el umbral. ¿Qu\'e impide que el ruido negro del asfalto en el fondo tambi\'en se binarice como blanco?}
+    \textbf{Respuesta:} "Esa es una excelente observaci\'on sobre el Adaptive Thresholding. El umbral baja tanto en zonas oscuras que el ruido de fondo efectivamente puede binarizarse. Sin embargo, no nos importa, porque \textbf{solo aplicamos el umbral adaptativo sobre el Bounding Box apretado que ya recort\'o YOLO}. Como YOLO recorta estrictamente la chapa met\'alica de la placa, casi no hay asfalto en nuestro recorte. Adem\'as, la etapa posterior de filtrado de contornos exige proporciones de Altura, Ancho y Área para considerar a un \emph{blob} como un car\'acter v\'alido. El ruido granulado que se genera se descarta en el filtrado por \'area m\'inima."
+\end{trampa}
 
 \end{document}
