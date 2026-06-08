@@ -135,9 +135,13 @@ Para el OCR, el tama\~no importa. Si la placa mide menos de \textbf{48 p\'ixeles
 \end{itemize}
 
 \subsection{Binarizaci\'on: Umbral Adaptativo Gaussiano vs Otsu}
-\textbf{Otsu Global} calcula un umbral \'unico minimizando la varianza intra-clase para toda la imagen. Falla estrepitosamente en placas vehiculares porque la iluminaci\'on nunca es uniforme (sombras de parachoques, reflejos del sol). Otsu terminaba oscureciendo media placa y fusionando caracteres.
+\textbf{Otsu Global} calcula un umbral \'unico $T$ minimizando la varianza intra-clase $\sigma_w^2(T)$ para toda la imagen. Falla estrepitosamente en placas vehiculares porque la iluminaci\'on nunca es uniforme (sombras de parachoques, reflejos del sol). Otsu terminaba oscureciendo media placa y fusionando caracteres.
 
-El sistema usa \textbf{Umbral Adaptativo Gaussiano}. El umbral se calcula din\'amicamente para un p\'ixel bas\'andose en el promedio ponderado (gaussiano) de su vecindad ($N \times N$). Si el bloque est\'a en sombra, el umbral local baja; si est\'a al sol, sube. Esto independiza los caracteres del gradiente de luz del fondo.
+El sistema usa \textbf{Umbral Adaptativo Gaussiano}. Matem\'aticamente, el umbral $T(x,y)$ para el p\'ixel en la posici\'on $(x,y)$ se calcula de forma din\'amica como una convoluci\'on cruzada con un kernel Gaussiano bidimensional $G(i,j)$ sobre una vecindad de tama\~no $N \times N$, menos una constante $C$:
+\begin{equation}
+T(x,y) = \left( \sum_{i=-k}^{k} \sum_{j=-k}^{k} I(x+i, y+j) \cdot G(i,j) \right) - C
+\end{equation}
+\textbf{Intuici\'on Did\'actica:} En lugar de usar una vara de medir est\'atica para toda la imagen, cada p\'ixel mira a sus vecinos. Si el barrio del p\'ixel est\'a en sombra (valores bajos), el promedio ponderado baja, as\'i que el umbral para ser considerado "blanco" se vuelve m\'as indulgente. Esto a\'isla perfectamente las letras del gradiente de luz.
 
 \subsection{Decodificaci\'on Posicional Categ\'orica}
 La red CNN arroja probabilidades \emph{Softmax} sobre 36 clases ($0-9$, $A-Z$). Existen letras y n\'umeros visualmente indiscernibles a baja resoluci\'on ($O \leftrightarrow 0$, $I \leftrightarrow 1$, $Z \leftrightarrow 2$, $B \leftrightarrow 8$).
@@ -160,12 +164,24 @@ Si la CNN arroja $p(0)=0.8, p(O)=0.2$ en la posici\'on $i=1$, el sistema fuerza 
 En el **Machine Learning cl\'asico** (como SVMs o Random Forests), los ingenieros deb\'ian aplicar \emph{Feature Engineering} manual: extraer m\'etricas de la imagen como gradientes HOG o SIFT y pasarlas al algoritmo.
 El **Deep Learning** revolucion\'o esto usando redes neuronales profundas que aprenden la extracci\'on de caracter\'isticas \textbf{y} la clasificaci\'on de manera simult\'anea y autom\'atica (*End-to-End learning de representaciones*). La red aprende qu\'e es lo m\'as \'util mirar.
 
-\subsection{Conceptos Nucleares de Entrenamiento}
+\subsection{Conceptos Nucleares y Matem\'aticas del Entrenamiento}
 \begin{itemize}
-    \item \textbf{Backpropagation y la Regla de la Cadena:} El modelo hace una predicci\'on y calcula el error (P\'erdida). \emph{Backpropagation} aplica c\'alculo diferencial (regla de la cadena de derivadas parciales) desde la salida hacia la entrada para calcular c\'omo cada peso de la red contribuy\'o al error, y los ajusta (Descenso del Gradiente).
-    \item \textbf{Funciones de Activaci\'on (ReLU vs Sigmoide):} Las redes necesitan no-linealidad. La \emph{Sigmoide} (curva en S) satura en 0 y 1, causando que sus derivadas sean casi cero en los extremos (el mortal \textbf{Vanishing Gradient Problem}), impidiendo que las redes profundas aprendan. Usamos \textbf{ReLU} ($f(x) = \max(0, x)$) porque su derivada es 1 si $x>0$, permitiendo que el gradiente fluya intacto hacia las capas iniciales.
-    \item \textbf{Batch Normalization:} En redes profundas, la distribuci\'on de las entradas a cada capa cambia constantemente mientras se actualizan los pesos (\emph{Internal Covariate Shift}). \emph{BatchNorm} normaliza (media 0, varianza 1) las activaciones por cada \emph{batch}, estabilizando el entrenamiento y permitiendo Tasas de Aprendizaje (LR) m\'as altas.
-    \item \textbf{Dropout:} Es una regularizaci\'on extrema. Durante el entrenamiento, apagamos aleatoriamente (ej. 50\%) algunas neuronas. Esto obliga a la red a \textbf{no depender} de una sola neurona o caracter\'istica para predecir, haci\'endola robusta y mitigando el \emph{Overfitting}.
+    \item \textbf{Backpropagation y la Regla de la Cadena:} El entrenamiento es un problema de optimizaci\'on. Para saber c\'omo corregir un peso $w_{ij}$ en una capa profunda, usamos c\'alculo diferencial. La Regla de la Cadena nos dice cu\'anta "culpa" tiene ese peso sobre el error final $L$:
+    \begin{equation}
+    \frac{\partial L}{\partial w_{ij}} = \frac{\partial L}{\partial y} \cdot \frac{\partial y}{\partial z} \cdot \frac{\partial z}{\partial w_{ij}}
+    \end{equation}
+    \textbf{Intuici\'on:} Calculamos la pendiente de la colina del error, y actualizamos el peso dando un paso hacia abajo: $w_{nuevo} = w_{viejo} - \alpha \frac{\partial L}{\partial w}$, donde $\alpha$ es la Tasa de Aprendizaje.
+    
+    \item \textbf{Funciones de Activaci\'on (ReLU vs Sigmoide):} La \emph{Sigmoide} ($\sigma(x) = \frac{1}{1 + e^{-x}}$) tiene una derivada m\'axima de $0.25$. Si tienes una red de 10 capas, por la Regla de la Cadena multiplicas $0.25^{10} \approx 0.0000009$. \textbf{Resultado:} El gradiente "desaparece" (\emph{Vanishing Gradient}) y las primeras capas nunca aprenden. \\
+    Por eso usamos \textbf{ReLU} ($f(x) = \max(0, x)$). Su derivada es exactamente $1$ si $x > 0$. Multiplicar $1 \times 1 \times \dots = 1$, el gradiente fluye intacto como una autopista hasta la primera capa.
+
+    \item \textbf{Optimizador AdamW vs Adam:} Adam cl\'asico mete el decaimiento de pesos (\emph{Weight Decay}) $\lambda$ \emph{adentro} de la f\'ormula del momentum, arruinando la regularizaci\'on. \textbf{AdamW} lo desacopla, restando la penalizaci\'on directamente del peso en el \'ultimo paso:
+    \begin{equation}
+    \theta_t = \theta_{t-1} - \eta \left( \alpha \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} \right) - \eta \lambda \theta_{t-1}
+    \end{equation}
+    \textbf{Intuici\'on:} Esto obliga constantemente a los pesos $\theta$ a encogerse (hacia cero), lo que significa redes m\'as simples que no memorizan los datos (\emph{evita el Overfitting}).
+
+    \item \textbf{Dropout:} Se apagan aleatoriamente (ej. 50\%) algunas neuronas multiplicando sus salidas por un filtro de Bernoulli. Matem\'aticamente, entrena un "ensamble" masivo de sub-redes compartiendo pesos.
 \end{itemize}
 
 % ================================================================
@@ -173,10 +189,15 @@ El **Deep Learning** revolucion\'o esto usando redes neuronales profundas que ap
 % ================================================================
 
 \subsection{Convoluciones vs Redes Densas}
-Si una imagen tiene $48 \times 48 = 2304$ p\'ixeles, una primera capa densa oculta con 1000 neuronas requerir\'ia $2.3$ Millones de pesos. Adem\'as, destruir\'ia la estructura topol\'ogica 2D de la imagen (un p\'ixel vecino al otro).
-Las \textbf{Convoluciones} aplican un \emph{filtro/kernel} peque\~no (ej. $3 \times 3$) que se desliza por la imagen. Esto tiene dos superpoderes:
-1. \textbf{Par\'ametros Compartidos:} El mismo filtro ($3 \times 3 = 9$ pesos) busca un patr\'on en toda la imagen.
-2. \textbf{Invarianza Espacial:} Si el filtro detecta un barde vertical en la esquina, podr\'a detectarlo igual en el centro.
+Si una imagen tiene $48 \times 48 = 2304$ p\'ixeles, una primera capa densa oculta con 1000 neuronas requerir\'ia $2.3$ Millones de pesos. Adem\'as, destruir\'ia la estructura topol\'ogica 2D de la imagen (un p\'ixel vecino al otro pierde significado).
+
+Las \textbf{Convoluciones} solucionan esto. Matem\'aticamente, el valor del mapa de caracter\'isticas $S$ en la posici\'on $(i,j)$ al aplicar un filtro (kernel) $K$ sobre la imagen $I$ es:
+\begin{equation}
+S(i,j) = (I * K)(i,j) = \sum_{m} \sum_{n} I(i+m, j+n) \cdot K(m,n)
+\end{equation}
+\textbf{Intuici\'on Did\'actica:} Imagina un filtro de Sobel para detectar l\'ineas verticales: $K = \begin{pmatrix} -1 & 0 & 1 \\ -2 & 0 & 2 \\ -1 & 0 & 1 \end{pmatrix}$. 
+Si deslizamos este filtro sobre una zona lisa (p\'ixeles todos valen 100), la operaci\'on da $(-100 + 100) + (-200 + 200) \dots = 0$ (no hay borde). Pero si lo deslizamos sobre un borde brillante a la derecha (izquierda=0, derecha=200), la salida "explota" a n\'umeros altos, detectando el borde.
+La CNN simplemente aprende los valores de estos filtros autom\'aticamente en lugar de que nosotros los programemos. Esto garantiza **Par\'ametros Compartidos** (pocos pesos) e **Invarianza Espacial** (el borde se detecta igual arriba que abajo).
 
 \subsection{Jerarqu\'ia de Caracter\'isticas}
 A medida que la red profundiza:
@@ -200,10 +221,14 @@ Modelos cl\'asicos como \textbf{Faster R-CNN} son de dos etapas: primero propone
 \textbf{YOLO} es de 1 etapa. Trata la detecci\'on como un problema de \emph{regresi\'on} en un solo paso. Toma la imagen, la divide en una grilla $S \times S$ y de una sola vez la red predice Bounding Boxes, Confianza y Probabilidad de Clases. Es extremadamente r\'apido y apto para Tiempo Real.
 
 \subsection{Non-Maximum Suppression (NMS)}
-Como YOLO predice sobre una grilla, a menudo arroja 5 cajas superpuestas para el mismo veh\'iculo. \textbf{NMS} soluciona esto:
-1. Toma la caja con mayor confianza.
-2. Descarta todas las dem\'as cajas que tengan un IoU (Intersection over Union) muy alto con la caja ganadora (ej. $>0.45$).
-3. Repite para el siguiente objeto.
+Como YOLO predice sobre una grilla, a menudo arroja 5 cajas superpuestas para el mismo veh\'iculo. \textbf{NMS} soluciona esto mediante la m\'etrica matem\'atica de \textbf{Intersecci\'on sobre Uni\'on (IoU)}:
+\begin{equation}
+\text{IoU}(A, B) = \frac{\text{\'Area de Intersecci\'on}}{\text{\'Area de Uni\'on}} = \frac{|A \cap B|}{|A| + |B| - |A \cap B|}
+\end{equation}
+\textbf{Intuici\'on del Algoritmo:}
+1. Ordena las cajas por Confianza y toma la mejor caja (Ej. $99\%$).
+2. Compara esta caja ganadora con todas las dem\'as. Si la f\'ormula del IoU da mayor a $0.45$, significa que las cajas se solapan demasiado (casi seguro son el mismo auto).
+3. Elimina las cajas redundantes y repite el proceso para el siguiente objeto detectado.
 
 % ================================================================
 \section{L\'ogica Difusa: Las Matem\'aticas de la Sanci\'on}
