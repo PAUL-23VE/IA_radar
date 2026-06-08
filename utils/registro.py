@@ -3,7 +3,7 @@ utils/registro.py
 Registro de eventos en JSON (reemplaza la base de datos PostgreSQL).
 
 Cada evento relevante (placa leída + velocidad + clasificación difusa) se
-agrega a registros/eventos.json como una lista de objetos. La ruta de la
+agrega a outputs/registros/eventos.json como una lista de objetos. La ruta de la
 captura del fotograma se guarda junto al evento.
 """
 
@@ -12,7 +12,7 @@ import os
 from datetime import datetime
 
 ROOT          = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DIR_REGISTROS = os.path.join(ROOT, "registros")
+DIR_REGISTROS = os.path.join(ROOT, "outputs", "registros")
 ARCHIVO       = os.path.join(DIR_REGISTROS, "eventos.json")
 
 
@@ -60,6 +60,6 @@ def registrar_evento(placa: str, velocidad: float, clasificacion: str,
 
 
 if __name__ == "__main__":
-    e = registrar_evento("ABC-1234", 27.5, "multa", 18, "capturas/demo.jpg")
+    e = registrar_evento("ABC-1234", 27.5, "multa", 18, "outputs/capturas/demo.jpg")
     print(f"Evento registrado en {ARCHIVO}:")
     print(json.dumps(e, ensure_ascii=False, indent=2))

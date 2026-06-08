@@ -48,9 +48,9 @@ from inferencia import (
 # ----------------------------------------------------------------
 #  Configuración
 # ----------------------------------------------------------------
-CSV_TEST    = ROOT / "dataset_combinado" / "ground_truth_test.csv"
+CSV_TEST    = ROOT / "data" / "datasets" / "dataset_combinado" / "ground_truth_test.csv"
 SPLITS      = ["train", "valid", "test"]  # carpetas que se recorrerán
-DATASET_DIR = ROOT / "dataset_propio"
+DATASET_DIR = ROOT / "data" / "datasets" / "dataset_propio"
 CLASES      = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 # ----------------------------------------------------------------
@@ -154,7 +154,7 @@ def main():
     total_ocr_ok = 0
 
     for split in SPLITS:
-        img_dir = ROOT / "dataset_combinado" / split / "images"
+        img_dir = ROOT / "data" / "datasets" / "dataset_combinado" / split / "images"
         if not img_dir.exists():
             print(f"[SKIP] {split}: directorio no encontrado")
             continue

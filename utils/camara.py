@@ -15,14 +15,12 @@ en la variable IP_IPHONE de este archivo.
 import cv2
 import numpy as np
 import time
-
+from config import settings
 
 # ----------------------------------------------------------------
 #  CONFIGURACIÓN — ajusta la IP según muestre tu app de cámara
 # ----------------------------------------------------------------
-IP_IPHONE   = "192.168.9.129"       # IP del iPhone en tu red WiFi
-PUERTO      = "4747"                 # Puerto por defecto de DroidCam
-URL_STREAM  = f"http://{IP_IPHONE}:{PUERTO}/"
+URL_STREAM  = f"http://{settings.IP_IPHONE}:{settings.PUERTO}/"
 
 # Si prefieres usar la cámara del computador para pruebas:
 # URL_STREAM = 0   # 0 = cámara integrada del laptop
@@ -46,10 +44,10 @@ class CamaraIphone:
         # Lista de rutas comunes según la App (IP Camera, EpocCam, DroidCam, etc.)
         urls_a_probar = [
             url_base,
-            f"http://{IP_IPHONE}:{PUERTO}/",
-            f"http://{IP_IPHONE}:{PUERTO}/mjpeg",
-            f"http://{IP_IPHONE}:{PUERTO}/cam.mjpg",
-            f"http://{IP_IPHONE}:{PUERTO}/live"
+            f"http://{settings.IP_IPHONE}:{settings.PUERTO}/",
+            f"http://{settings.IP_IPHONE}:{settings.PUERTO}/mjpeg",
+            f"http://{settings.IP_IPHONE}:{settings.PUERTO}/cam.mjpg",
+            f"http://{settings.IP_IPHONE}:{settings.PUERTO}/live"
         ]
         
         print("[Cámara] Intentando conectar con el iPhone...")
@@ -69,7 +67,7 @@ class CamaraIphone:
 
         if self.cap is None:
             raise ConnectionError(
-                f"No se pudo conectar al stream en la IP {IP_IPHONE}:{PUERTO}\n"
+                f"No se pudo conectar al stream en la IP {settings.IP_IPHONE}:{settings.PUERTO}\n"
                 "  Verifica que:\n"
                 "  1. El iPhone y el computador están en la misma red WiFi\n"
                 "  2. La app está transmitiendo video en este momento\n"

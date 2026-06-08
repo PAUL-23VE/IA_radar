@@ -3,8 +3,8 @@ Crea una plantilla CSV para anotar la placa real de cada imagen.
 
 Uso recomendado:
   python scripts/crear_ground_truth.py \
-    --results dev_outputs/dataset_ocr/resultados.csv \
-    --out dataset_combinado/ground_truth_test.csv
+    --results outputs/dev_outputs/dataset_ocr/resultados.csv \
+    --out data/datasets/dataset_combinado/ground_truth_test.csv
 
 Luego abre el CSV y llena la columna placa_real.
 """
@@ -38,7 +38,7 @@ def main():
     )
     parser.add_argument(
         "--out",
-        default="dataset_combinado/ground_truth_test.csv",
+        default="data/datasets/dataset_combinado/ground_truth_test.csv",
         help="CSV de salida con columna placa_real.",
     )
     args = parser.parse_args()

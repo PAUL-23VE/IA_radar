@@ -40,7 +40,7 @@ def abrir_writer(frame, carpeta: Path, fps: float):
 def main():
     parser = argparse.ArgumentParser(description="Probar camara y OCR de placas.")
     parser.add_argument("--source", default="0", help="Indice de camara, ruta de video o URL HTTP.")
-    parser.add_argument("--out", default="dev_outputs/camara")
+    parser.add_argument("--out", default="outputs/dev_outputs/camara")
     parser.add_argument("--every", type=int, default=30, help="Corre OCR cada N frames.")
     parser.add_argument("--variants", type=int, default=2, help="Variantes OCR por lectura.")
     parser.add_argument(

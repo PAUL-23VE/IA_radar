@@ -46,10 +46,10 @@ from modelo import crear_modelo_cnn  # noqa: E402
 torch.manual_seed(42)
 np.random.seed(42)
 
-DATASET     = ROOT / "Dataset_OCR_Placas"
+DATASET     = ROOT / "data" / "datasets" / "Dataset_OCR_Placas"
 RUTA_MODELO = ROOT / "models" / "ocr_char.pt"
 IMG_SIZE    = 48
-EPOCHS      = 35
+EPOCHS      = 70
 BATCH_SIZE  = 256
 NUM_WORKERS = 8
 
@@ -61,15 +61,23 @@ usar_amp = device.type == "cuda"
 #  Transforms
 # ----------------------------------------------------------------
 def construir_transforms():
-    # Augmentación SUAVE: los caracteres son pequeños y el dataset ya es ruidoso;
-    # transformaciones agresivas (perspectiva/shear fuertes) causaban underfitting.
+    # Aumentación Robusta para caracteres reales de placas
     tf_train = transforms.Compose([
         transforms.Grayscale(num_output_channels=1),
         transforms.Resize((IMG_SIZE, IMG_SIZE)),
-        transforms.RandomRotation(5),
-        transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.95, 1.05)),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        # Rotación aleatoria moderada para caracteres inclinados
+        transforms.RandomRotation(8),
+        # Traslación, escalado y deformación angular (shear)
+        transforms.RandomAffine(degrees=0, translate=(0.08, 0.08), scale=(0.90, 1.10), shear=5),
+        # Distorsión de perspectiva para simular ángulos de cámara
+        transforms.RandomPerspective(distortion_scale=0.15, p=0.4),
+        # Variabilidad de brillo y contraste por iluminación y sombras
+        transforms.ColorJitter(brightness=0.3, contrast=0.3),
+        # Desenfoque gaussiano para simular pérdida de definición/movimiento
+        transforms.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 1.0)),
         transforms.ToTensor(),
+        # Erasing aleatorio para simular tornillos, suciedad o daños en la placa
+        transforms.RandomErasing(p=0.2, scale=(0.02, 0.12), ratio=(0.3, 3.3), value=0),
     ])
     tf_eval = transforms.Compose([
         transforms.Grayscale(num_output_channels=1),
@@ -154,11 +162,11 @@ def entrenar():
                               num_workers=NUM_WORKERS, pin_memory=pin)
 
     modelo    = crear_modelo_cnn().to(device)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.08)
     optimizer = optim.AdamW(modelo.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=1e-3, epochs=EPOCHS, steps_per_epoch=len(train_loader),
-        pct_start=0.1,
+        pct_start=0.15,
     )
     scaler = torch.amp.GradScaler(enabled=usar_amp)
 

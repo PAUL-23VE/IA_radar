@@ -13,80 +13,33 @@ NUM_CLASES = len(CLASES)
 TAMANO_IMAGEN = (32, 32)
 
 
-class ResBlock(nn.Module):
-    def __init__(self, channels: int):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
-            nn.BatchNorm2d(channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
-            nn.BatchNorm2d(channels),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.relu(x + self.net(x), inplace=True)
-
+import torchvision.models as models
 
 class CNNPlacas(nn.Module):
     """
-    ResNet-style CNN para clasificación de caracteres de placa (32×32 → 36 clases).
-    ~1.2M parámetros. Latencia ~1ms/batch(8) en GPU.
+    ResNet18-based CNN para clasificación de caracteres de placa (48x48 o 64x64 -> 36 clases).
+    ~11.1M parámetros. Alta precisión y latencia baja.
     """
-
     def __init__(self):
         super().__init__()
-
-        # 1×32×32 → 64×16×16
-        self.stem = nn.Sequential(
-            nn.Conv2d(1, 64, 3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, 3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-            nn.Dropout2d(0.15),
-        )
-        self.res1 = ResBlock(64)
-
-        # 64×16×16 → 128×8×8
-        self.down1 = nn.Sequential(
-            nn.Conv2d(64, 128, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.Dropout2d(0.2),
-        )
-        self.res2 = ResBlock(128)
-
-        # 128×8×8 → 256×4×4
-        self.down2 = nn.Sequential(
-            nn.Conv2d(128, 256, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.Dropout2d(0.25),
-        )
-        self.res3 = ResBlock(256)
-
-        # 256×4×4 → 36
-        self.head = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            nn.Linear(256, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.4),
-            nn.Linear(256, NUM_CLASES),
+        
+        # Cargar ResNet18 sin pesos pre-entrenados
+        self.backbone = models.resnet18(weights=None)
+        
+        # Modificar la primera capa convolucional para que acepte 1 canal (escala de grises)
+        # en lugar de 3 (RGB), y optimizarla para imágenes pequeñas (kernel 3, stride 1)
+        self.backbone.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.backbone.maxpool = nn.Identity()  # Remover el primer maxpool para mantener resolución
+        
+        # Modificar la capa final (fully connected) para que de 36 salidas
+        num_ftrs = self.backbone.fc.in_features
+        self.backbone.fc = nn.Sequential(
+            nn.Dropout(0.3),
+            nn.Linear(num_ftrs, NUM_CLASES)
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.stem(x)
-        x = self.res1(x)
-        x = self.down1(x)
-        x = self.res2(x)
-        x = self.down2(x)
-        x = self.res3(x)
-        return self.head(x)
+        return self.backbone(x)
 
 
 def crear_modelo_cnn() -> CNNPlacas:

@@ -1,22 +1,30 @@
 \documentclass[11pt,a4paper]{article}
 
 % ----------------------------------------------------------------
-%  Paquetes
+%  Paquetes Avanzados
 % ----------------------------------------------------------------
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[spanish,es-nodecimaldot]{babel}
 \usepackage[margin=2.5cm]{geometry}
-\usepackage{amsmath}
-\usepackage{amssymb}
+\usepackage{amsmath,amssymb,amsfonts}
 \usepackage{booktabs}
 \usepackage{xcolor}
 \usepackage{graphicx}
 \usepackage{enumitem}
 \usepackage{listings}
+\usepackage{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, fit, backgrounds, shadows.blur}
 \usepackage[hidelinks]{hyperref}
+\usepackage{xurl}
 
 \definecolor{codegray}{gray}{0.95}
+\definecolor{primary}{RGB}{41, 128, 185}
+\definecolor{danger}{RGB}{192, 57, 43}
+\definecolor{success}{RGB}{39, 174, 96}
+\definecolor{warning}{RGB}{243, 156, 18}
+
 \lstset{
   basicstyle=\ttfamily\footnotesize,
   backgroundcolor=\color{codegray},
@@ -26,353 +34,308 @@
   showstringspaces=false,
 }
 
-\title{\textbf{Sistema de radar inteligente de placas vehiculares}\\
-\large Detecci\'on (YOLOv11) + OCR de caracteres (CNN) + l\'ogica difusa de sanci\'on}
-\author{Proyecto final --- Inteligencia Artificial \\ Universidad T\'ecnica de Ambato}
+\tcbuselibrary{skins,breakable}
+\newtcolorbox{pregunta}[2][]{
+    colback=primary!5!white,
+    colframe=primary!80!black,
+    fonttitle=\bfseries,
+    title={Pregunta: #2},
+    breakable,
+    drop shadow,
+    #1
+}
+
+\newtcolorbox{trampa}[2][]{
+    colback=danger!5!white,
+    colframe=danger!80!black,
+    fonttitle=\bfseries,
+    title={Pregunta Trampa: #2},
+    breakable,
+    drop shadow,
+    #1
+}
+
+\title{\textbf{\Huge Wiki de Conocimiento y Defensa}\\
+\vspace{0.5cm}
+\Large Detecci\'on (YOLOv11) + OCR CNN + L\'ogica Difusa Takagi-Sugeno}
+\author{\textbf{Material de Estudio para Defensa del Proyecto} \\ Inteligencia Artificial --- Universidad T\'ecnica de Ambato}
 \date{Junio 2026}
 
 \begin{document}
 \maketitle
-
-\begin{abstract}
-Se describe un sistema de visi\'on por computador para control de velocidad en una
-zona controlada (p.\,ej.\ parqueadero). El sistema: (1) detecta la regi\'on de la
-placa con \textbf{YOLOv11}, (2) segmenta y reconoce sus caracteres con una
-\textbf{red neuronal convolucional (CNN) propia} entrenada con caracteres reales,
-(3) estima la velocidad mediante dos l\'ineas virtuales, (4) decide la sanci\'on con
-un \textbf{sistema de l\'ogica difusa} y (5) registra cada evento en \textbf{JSON}
-junto con una captura del fotograma. No se usa EasyOCR ni base de datos relacional.
-La precisi\'on por car\'acter en el conjunto de prueba es del \textbf{91{,}3\,\%}
-(\textbf{93{,}6\,\%} con decodificaci\'on posicional); la \textbf{votaci\'on temporal
-multi-frame} recupera la placa correcta a nivel de secuencia en tiempo real.
-\end{abstract}
+\tableofcontents
+\newpage
 
 % ================================================================
-\section{Arquitectura general}
+\section{Arquitectura del Sistema y Decisiones de Dise\~no}
 % ================================================================
-El sistema procesa un flujo de video en tiempo real con la siguiente tuber\'ia:
 
-\begin{center}
-\fbox{\parbox{0.92\textwidth}{\centering
-\textsf{Frame} $\rightarrow$ \textsf{YOLOv11 (regi\'on de placa)} $\rightarrow$
-\textsf{Preproceso (gris+CLAHE)} $\rightarrow$ \textsf{Segmentaci\'on de caracteres}
-$\rightarrow$ \textsf{CNN (36 clases)} $\rightarrow$ \textsf{Decodificaci\'on
-posicional} $\rightarrow$ \textsf{Votaci\'on temporal} $\rightarrow$
-\textsf{Placa}}}
-\end{center}
+\subsection{Pipeline de Procesamiento (Diagrama)}
 
-En paralelo, un m\'odulo de fondo (\emph{background subtraction}) mide la velocidad
-con dos l\'ineas virtuales; la velocidad alimenta el sistema difuso que decide la
-sanci\'on. El reconocimiento de placa corre en un \textbf{hilo separado}
-(\texttt{RecognitionWorker}) para no bloquear la captura.
+El sistema emplea una arquitectura \textbf{h\'ibrida}. En lugar de usar una red neuronal \emph{end-to-end} (que recibe la imagen y arroja el texto), el problema se divide en etapas especializadas. Esto garantiza mayor interpretabilidad, facilidad de depuraci\'on y determinismo.
 
-\paragraph{Archivos principales.}
-\begin{itemize}[nosep]
-  \item \texttt{cnn/modelo.py} --- arquitectura CNN (\texttt{CNNPlacas}).
-  \item \texttt{cnn/entrenar\_ocr\_real.py} --- entrenamiento con datos reales.
-  \item \texttt{cnn/inferencia.py} --- detecci\'on + segmentaci\'on + clasificaci\'on.
-  \item \texttt{main.py} --- bucle principal, hilo de reconocimiento y votaci\'on.
-  \item \texttt{velocidad/logica\_difusa.py} --- sistema difuso de sanci\'on.
-  \item \texttt{utils/registro.py} --- registro de eventos en JSON.
+\begin{figure}[h!]
+    \centering
+    \begin{tikzpicture}[
+        node distance=1.5cm and 2.5cm,
+        box/.style={rectangle, draw, rounded corners, fill=white, drop shadow, align=center, minimum height=1cm, minimum width=2.5cm, font=\sffamily\footnotesize},
+        arrow/.style={-{Stealth[scale=1.2]}, thick},
+        group/.style={rectangle, draw, dashed, inner sep=0.3cm}
+    ]
+        % Nodes
+        \node[box, fill=gray!10] (cam) {Fotograma\\(C\'amara)};
+        \node[box, right=of cam, fill=blue!10] (yolo) {YOLOv11\\(Detecci\'on de Placa)};
+        \node[box, right=of yolo, fill=orange!10] (prep) {Preproceso\\(CLAHE + Gris)};
+        \node[box, right=of prep, fill=orange!10] (seg) {Segmentaci\'on\\(Umbral Gaussiano)};
+        \node[box, below=of seg, fill=purple!10] (cnn) {CNN Clasificadora\\(36 clases, Batch)};
+        \node[box, left=of cnn, fill=green!10] (decod) {Decodificaci\'on\\Posicional};
+        \node[box, left=of decod, fill=green!10] (vot) {Votaci\'on Temporal\\(Multi-frame)};
+        \node[box, below=of vot, fill=red!10] (difuso) {L\'ogica Difusa\\(Takagi-Sugeno)};
+        \node[box, right=of difuso, fill=teal!10] (json) {Registro JSON\\+ Email};
+
+        % Backgrounds for modules
+        \begin{scope}[on background layer]
+            \node[group, fit=(yolo) (prep) (seg) (cnn), fill=yellow!5, label={[anchor=south]above:\textbf{M\'odulo de Visi\'on (OCR S\'incrono)}}] {};
+            \node[group, fit=(decod) (vot), fill=green!5, label={[anchor=south]above:\textbf{Post-procesamiento}}] {};
+        \end{scope}
+
+        % Arrows
+        \draw[arrow] (cam) -- (yolo);
+        \draw[arrow] (yolo) -- node[above, font=\tiny] {Recorte Bounding Box} (prep);
+        \draw[arrow] (prep) -- (seg);
+        \draw[arrow] (seg) -- node[right, font=\tiny] {Cajas de Caracteres} (cnn);
+        \draw[arrow] (cnn) -- node[above, font=\tiny] {Softmax Probs} (decod);
+        \draw[arrow] (decod) -- (vot);
+        \draw[arrow] (vot) -- node[left, font=\tiny] {Placa Final + Velocidad} (difuso);
+        \draw[arrow] (difuso) -- node[above, font=\tiny] {Sanci\'on (Horas)} (json);
+
+    \end{tikzpicture}
+    \caption{Arquitectura del Sistema de Radar y OCR.}
+\end{figure}
+
+\subsection{El Debate Cr\'itico: OCR S\'incrono vs As\'incrono}
+Una de las decisiones arquitect\'onicas m\'as fuertes fue \textbf{mantener el OCR en modo s\'incrono} (procesado en el bucle principal) y no enviar la tarea a un \texttt{ThreadPoolExecutor} as\'incrono.
+
+\begin{itemize}
+    \item \textbf{El problema as\'incrono:} En un sistema con una sola GPU, el tracker de objetos (YOLO con ByteTrack) y el clasificador CNN compiten por los recursos CUDA. Si se usan hilos (as\'incrono), la alternancia de contexto en la GPU genera cuellos de botella no deterministas (latencia espasm\'odica) y p\'erdida de fotogramas (lag).
+    \item \textbf{La soluci\'on s\'incrona:} Se procesa exactamente \textbf{1 OCR por frame}. Para no desperdiciar recursos, las detecciones de YOLO se \emph{ordenan por \'area}. As\'i, el "presupuesto" de 1 OCR se gasta siempre en el veh\'iculo \textbf{m\'as cercano y grande}, garantizando la m\'axima calidad de resoluci\'on de la placa sin bloquear la GPU para el tracking del resto de autos.
 \end{itemize}
 
 % ================================================================
-\section{Datos de entrenamiento}
+\section{Visi\'on por Computador Avanzada}
 % ================================================================
-\textbf{Importante:} el modelo de OCR se entrena con \emph{caracteres sueltos}, no con
-placas completas ni con los videos de prueba. Los videos (\texttt{videos/carros*.mp4})
-se usan \textbf{\'unicamente para evaluar}.
 
-El conjunto \texttt{Dataset\_OCR\_Placas/} contiene caracteres reales ya segmentados
-(im\'agenes PNG de $64\times64$ en escala de grises), organizados como
-\texttt{ImageFolder} en 36 clases ($0$--$9$, $A$--$Z$):
+\subsection{Preprocesamiento y Resoluciones: El Umbral de 48px}
+El sistema extrae el \emph{bounding box} de la placa directamente del fotograma original en alta resoluci\'on, no del tensor reescalado ($416\times416$) de YOLO.
 
-\begin{center}
-\begin{tabular}{lrr}
-\toprule
-Partici\'on & Im\'agenes & Uso \\
-\midrule
-\texttt{train} & 50\,534 & ajuste de pesos \\
-\texttt{valid} & 11\,829 & selecci\'on del mejor modelo \\
-\texttt{test}  & 5\,680  & evaluaci\'on final \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\paragraph{Observaciones sobre los datos.}
-\begin{itemize}[nosep]
-  \item Provienen de placas \textbf{indias} (p.\,ej.\ KA031351, DL3CAY9324). Esto no
-        importa para un clasificador de \emph{caracteres}: los glifos
-        $0$--$9$, $A$--$Z$ son universales. S\'i importa el \emph{formato}, que se
-        valida aparte (placa ecuatoriana \texttt{ABC-NNNN}).
-  \item El conjunto es \textbf{ruidoso}: algunas clases contienen recortes parciales o
-        ruido, y los pares $O/0$ y $I/1$ son glifos visualmente id\'enticos. Esto fija
-        un techo pr\'actico de exactitud por car\'acter cercano al 91\,\%.
-  \item Las \textbf{clases de letras} tienen menos muestras que las de d\'igitos
-        (p.\,ej.\ $Q=397$, $O=1016$ frente a $0=2610$), por lo que las letras se
-        reconocen con menor confianza.
+Para el OCR, el tama\~no importa. Si la placa mide menos de \textbf{48 p\'ixeles de altura}, se aplica un \textbf{escalado bic\'ubico} (\texttt{cv2.INTER\_CUBIC}).
+\begin{itemize}
+    \item \textbf{¿Por qu\'e 48px?} Se baj\'o el umbral hist\'orico de 72px a 48px emp\'iricamente. Escalar placas medianas (50-70px) a\~nad\'ia ruido de interpolaci\'on innecesario.
+    \item \textbf{¿Por qu\'e Bic\'ubico y no Vecino M\'as Pr\'oximo?} El vecino m\'as pr\'oximo genera artefactos de "escalera" (aliasing) que destruyen las curvas de las letras (O, C, 8). La bic\'ubica usa una f\'ormula polinomial sobre una vecindad $4\times4$, preservando gradientes suaves en los bordes para la posterior binarizaci\'on.
 \end{itemize}
 
-\paragraph{Por qu\'e no una CRNN \emph{end-to-end}.} Un intento previo con datos
-\emph{sint\'eticos} (tiras de placa generadas con tipograf\'ias) fracas\'o porque los
-glifos sint\'eticos no se parecen a los reales. Reconstruir tiras a partir de estos
-caracteres reaprender\'ia adem\'as el \emph{formato indio} de las placas. Por eso se
-opt\'o por un \textbf{clasificador de caracteres} (glifos universales) m\'as una etapa
-de segmentaci\'on y validaci\'on de formato.
+\subsection{Binarizaci\'on: Umbral Adaptativo Gaussiano vs Otsu}
+\textbf{Otsu Global} calcula un umbral \'unico $T$ minimizando la varianza intra-clase $\sigma_w^2(T)$ para toda la imagen. Falla estrepitosamente en placas vehiculares porque la iluminaci\'on nunca es uniforme (sombras de parachoques, reflejos del sol). Otsu terminaba oscureciendo media placa y fusionando caracteres.
 
-% ================================================================
-\section{Modelo clasificador}
-% ================================================================
-La red \texttt{CNNPlacas} es una CNN de estilo ResNet ($\sim$1{,}2\,M par\'ametros) que
-recibe una imagen en escala de grises de $48\times48$ y produce una distribuci\'on
-sobre 36 clases.
-
-\begin{center}
-\begin{tabular}{ll}
-\toprule
-Bloque & Salida \\
-\midrule
-Stem ($2\times$Conv$3{\times}3$, BN, ReLU, MaxPool, Dropout) & $64\times24\times24$ \\
-ResBlock & $64\times24\times24$ \\
-Down1 (Conv stride 2) + ResBlock & $128\times12\times12$ \\
-Down2 (Conv stride 2) + ResBlock & $256\times6\times6$ \\
-Cabeza (AdaptiveAvgPool, FC, BN, Dropout, FC) & $36$ \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-La salida son \emph{logits} $z\in\mathbb{R}^{36}$; la probabilidad de la clase $k$ es
+El sistema usa \textbf{Umbral Adaptativo Gaussiano}. Matem\'aticamente, el umbral $T(x,y)$ para el p\'ixel en la posici\'on $(x,y)$ se calcula de forma din\'amica como una convoluci\'on cruzada con un kernel Gaussiano bidimensional $G(i,j)$ sobre una vecindad de tama\~no $N \times N$, menos una constante $C$:
 \begin{equation}
-p_k = \frac{e^{z_k}}{\sum_{j=1}^{36} e^{z_j}} \quad (\text{softmax}).
+T(x,y) = \left( \sum_{i=-k}^{k} \sum_{j=-k}^{k} I(x+i, y+j) \cdot G(i,j) \right) - C
 \end{equation}
+\textbf{Intuici\'on Did\'actica:} En lugar de usar una vara de medir est\'atica para toda la imagen, cada p\'ixel mira a sus vecinos. Si el barrio del p\'ixel est\'a en sombra (valores bajos), el promedio ponderado baja, as\'i que el umbral para ser considerado "blanco" se vuelve m\'as indulgente. Esto a\'isla perfectamente las letras del gradiente de luz.
 
-% ================================================================
-\section{Entrenamiento}
-% ================================================================
-Script: \texttt{cnn/entrenar\_ocr\_real.py}.
+\subsection{Decodificaci\'on Posicional Categ\'orica}
+La red CNN arroja probabilidades \emph{Softmax} sobre 36 clases ($0-9$, $A-Z$). Existen letras y n\'umeros visualmente indiscernibles a baja resoluci\'on ($O \leftrightarrow 0$, $I \leftrightarrow 1$, $Z \leftrightarrow 2$, $B \leftrightarrow 8$).
 
-\begin{center}
-\begin{tabular}{ll}
-\toprule
-Hiperpar\'ametro & Valor \\
-\midrule
-Tama\~no de entrada & $48\times48$ (gris) \\
-Optimizador & AdamW ($lr=10^{-3}$, \emph{weight decay} $10^{-4}$) \\
-Planificador & OneCycleLR \\
-P\'erdida & Entrop\'ia cruzada (\emph{label smoothing} $0{,}05$) \\
-\'Epocas & 35 \\
-\emph{Batch} & 256 \\
-Precisi\'on mixta (AMP) & S\'i (GPU RTX 5050) \\
-Aumentaci\'on & rotaci\'on $\pm5^\circ$, traslaci\'on/escala leve, \emph{jitter} de brillo/contraste \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-La aumentaci\'on se mantiene \textbf{suave} a prop\'osito: transformaciones agresivas
-(perspectiva y \emph{shear} fuertes) sobre caracteres peque\~nos causaban
-\emph{underfitting}. El mejor modelo (por exactitud de validaci\'on) se guarda en
-\texttt{models/ocr\_char.pt}, incluyendo la lista de clases para garantizar el mismo
-mapeo \'indice$\rightarrow$car\'acter en inferencia.
-
-\paragraph{Resultados de entrenamiento.}
-\begin{center}
-\begin{tabular}{lc}
-\toprule
-M\'etrica & Valor \\
-\midrule
-Exactitud de validaci\'on (mejor) & 91{,}6\,\% \\
-Exactitud por car\'acter en \texttt{test} & \textbf{91{,}3\,\%} \\
-Exactitud por car\'acter con decodificaci\'on posicional & \textbf{93{,}6\,\%} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-Confusiones principales (esperables): $O\leftrightarrow0$, $7\rightarrow1$,
-$9\rightarrow6$, $B\leftrightarrow8$, $Z\rightarrow2$. La decodificaci\'on posicional
-(secci\'on~\ref{sec:posicional}) elimina las confusiones \emph{cruzadas}
-letra/d\'igito.
-
-% ================================================================
-\section{Inferencia}
-% ================================================================
-
-\subsection{Detecci\'on de la placa}
-YOLOv11 (\texttt{best.pt}) entrega la caja de la placa de mayor confianza. Se a\~nade
-un \emph{padding} del 8\,\% para no cortar bordes de caracteres.
-
-\subsection{Preprocesamiento}
-El recorte se pasa a gris, se aplica \emph{sharpening} si hay \emph{motion blur}
-(varianza Laplaciana $<80$) y se normaliza el contraste con \textbf{CLAHE}.
-
-\subsection{Segmentaci\'on de caracteres}
-Se usa \textbf{umbral adaptativo gaussiano} (\texttt{adaptiveThreshold},
-\texttt{BINARY\_INV}, ventana $21$, $C=9$) en lugar de Otsu global, que fusionaba toda
-la placa en un solo blob bajo iluminaci\'on irregular o \emph{blur}. Luego:
-\begin{enumerate}[nosep]
-  \item apertura morfol\'ogica para quitar ruido sin unir caracteres;
-  \item componentes conexos $\rightarrow$ cajas candidatas;
-  \item filtrado por altura ($\geq 0{,}25H$), relaci\'on de aspecto ($0{,}10$--$1{,}3$)
-        y \'area m\'inima;
-  \item filtrado de \emph{outliers} por la mediana de alturas (elimina la caja del
-        marco de la placa);
-  \item ordenamiento por la coordenada $x$ (izquierda $\rightarrow$ derecha).
-\end{enumerate}
-Cada caja se recorta de la imagen \emph{en gris} (no binarizada), que es el dominio con
-el que se entren\'o el clasificador.
-
-\subsection{Clasificaci\'on}
-Todos los recortes de car\'acter se clasifican en un \textbf{\'unico \emph{batch}} en
-GPU. Para cada posici\'on se obtiene la distribuci\'on softmax $p^{(i)}$.
-
-\subsection{Decodificaci\'on posicional}
-\label{sec:posicional}
-La placa ecuatoriana tiene formato \texttt{ABC-NNNN}: las primeras \textbf{tres
-posiciones son letras} y el resto \textbf{d\'igitos}. Restringir el \emph{argmax} de
-cada posici\'on a su grupo elimina las confusiones cruzadas
-($O\!\leftrightarrow\!0$, $I\!\leftrightarrow\!1$, $Z\!\leftrightarrow\!2$,
-$B\!\leftrightarrow\!8$, $S\!\leftrightarrow\!5$):
-\begin{equation}
+Dado que la placa ecuatoriana tiene el patr\'on estricto \texttt{ABC-NNNN} (3 letras, 3-4 d\'igitos), aplicamos un \textbf{argmax segmentado}:
+\[
 c_i =
 \begin{cases}
-\displaystyle\arg\max_{k\in\mathcal{L}} p^{(i)}_k & i < 3 \quad (\text{letras } \mathcal{L})\\[6pt]
-\displaystyle\arg\max_{k\in\mathcal{D}} p^{(i)}_k & i \geq 3 \quad (\text{d\'igitos } \mathcal{D})
+\arg\max_{k\in\mathcal{L}} p^{(i)}_k & \text{si } i < 3 \quad (\mathcal{L} = \text{Letras})\\
+\arg\max_{k\in\mathcal{D}} p^{(i)}_k & \text{si } i \geq 3 \quad (\mathcal{D} = \text{D\'igitos})
 \end{cases}
-\end{equation}
-Solo se aplica cuando hay 6 o 7 caracteres segmentados. Finalmente, una expresi\'on
-regular valida el formato \texttt{[A-Z]\{3\}-\textbackslash d\{3,4\}}.
+\]
+Si la CNN arroja $p(0)=0.8, p(O)=0.2$ en la posici\'on $i=1$, el sistema fuerza la decodificaci\'on a $O$, corrigiendo el error intr\'inseco del modelo.
 
 % ================================================================
-\section{Votaci\'on temporal (¿por qu\'e?)}
+\section{Fundamentos Te\'oricos de Machine Learning y Deep Learning}
 % ================================================================
-En un sistema en tiempo real la \textbf{misma placa aparece en decenas de fotogramas}.
-Un solo fotograma alcanza $\sim$93\,\% de exactitud por car\'acter, es decir
-$\approx 1$ car\'acter err\'oneo por blur o \'angulo, lo que da una placa
-\emph{completa} incorrecta. Los errores por fotograma son en gran parte
-\textbf{aleatorios}, as\'i que combinarlos los cancela.
 
-La clase \texttt{VotadorPlaca} acumula las lecturas v\'alidas (con confianza
-$\geq 0{,}45$) y decide por \textbf{mayor\'ia posici\'on a posici\'on} sobre la
-longitud m\'as frecuente:
-\begin{equation}
-\widehat{c}_i = \operatorname{moda}\big(\, c_i^{(1)}, c_i^{(2)}, \ldots, c_i^{(T)} \,\big),
-\end{equation}
-donde $c_i^{(t)}$ es el car\'acter le\'ido en la posici\'on $i$ del fotograma $t$. Se
-exige un m\'inimo de votos (por defecto 4) antes de aceptar el consenso.
+\subsection{Machine Learning Cl\'asico vs Deep Learning}
+En el **Machine Learning cl\'asico** (como SVMs o Random Forests), los ingenieros deb\'ian aplicar \emph{Feature Engineering} manual: extraer m\'etricas de la imagen como gradientes HOG o SIFT y pasarlas al algoritmo.
+El **Deep Learning** revolucion\'o esto usando redes neuronales profundas que aprenden la extracci\'on de caracter\'isticas \textbf{y} la clasificaci\'on de manera simult\'anea y autom\'atica (*End-to-End learning de representaciones*). La red aprende qu\'e es lo m\'as \'util mirar.
 
-\paragraph{Ejemplo real.} Para la placa \texttt{PDK-7282}, fotogramas sueltos dieron
-\texttt{HDK-7282}, \texttt{HLK-7282}, \texttt{PLK-7282}\ldots; la votaci\'on por
-posici\'on recupera el \textbf{consenso correcto \texttt{PDK-7282}}. Sin votaci\'on,
-el sistema aceptar\'ia el primer fotograma, que puede estar equivocado.
+\subsection{Conceptos Nucleares y Matem\'aticas del Entrenamiento}
+\begin{itemize}
+    \item \textbf{Backpropagation y la Regla de la Cadena:} El entrenamiento es un problema de optimizaci\'on. Para saber c\'omo corregir un peso $w_{ij}$ en una capa profunda, usamos c\'alculo diferencial. La Regla de la Cadena nos dice cu\'anta "culpa" tiene ese peso sobre el error final $L$:
+    \begin{equation}
+    \frac{\partial L}{\partial w_{ij}} = \frac{\partial L}{\partial y} \cdot \frac{\partial y}{\partial z} \cdot \frac{\partial z}{\partial w_{ij}}
+    \end{equation}
+    \textbf{Intuici\'on:} Calculamos la pendiente de la colina del error, y actualizamos el peso dando un paso hacia abajo: $w_{nuevo} = w_{viejo} - \alpha \frac{\partial L}{\partial w}$, donde $\alpha$ es la Tasa de Aprendizaje.
+    
+    \item \textbf{Funciones de Activaci\'on (ReLU vs Sigmoide):} La \emph{Sigmoide} ($\sigma(x) = \frac{1}{1 + e^{-x}}$) tiene una derivada m\'axima de $0.25$. Si tienes una red de 10 capas, por la Regla de la Cadena multiplicas $0.25^{10} \approx 0.0000009$. \textbf{Resultado:} El gradiente "desaparece" (\emph{Vanishing Gradient}) y las primeras capas nunca aprenden. \\
+    Por eso usamos \textbf{ReLU} ($f(x) = \max(0, x)$). Su derivada es exactamente $1$ si $x > 0$. Multiplicar $1 \times 1 \times \dots = 1$, el gradiente fluye intacto como una autopista hasta la primera capa.
 
-% ================================================================
-\section{Velocidad y l\'ogica difusa}
-% ================================================================
-La velocidad se estima con dos l\'ineas virtuales separadas una distancia conocida
-$d$. Si el veh\'iculo cruza A en $t_A$ y B en $t_B$:
-\begin{equation}
-v\,[\text{km/h}] = \frac{d}{t_B - t_A}\times 3{,}6 .
-\end{equation}
+    \item \textbf{Optimizador AdamW vs Adam:} Adam cl\'asico mete el decaimiento de pesos (\emph{Weight Decay}) $\lambda$ \emph{adentro} de la f\'ormula del momentum, arruinando la regularizaci\'on. \textbf{AdamW} lo desacopla, restando la penalizaci\'on directamente del peso en el \'ultimo paso:
+    \begin{equation}
+    \theta_t = \theta_{t-1} - \eta \left( \alpha \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} \right) - \eta \lambda \theta_{t-1}
+    \end{equation}
+    \textbf{Intuici\'on:} Esto obliga constantemente a los pesos $\theta$ a encogerse (hacia cero), lo que significa redes m\'as simples que no memorizan los datos (\emph{evita el Overfitting}).
 
-El sistema difuso (\texttt{scikit-fuzzy}) clasifica la velocidad y calcula la sanci\'on
-en \textbf{horas de indisponibilidad del veh\'iculo}. Pol\'itica del proyecto:
-
-\begin{center}
-\begin{tabular}{lll}
-\toprule
-Velocidad (km/h) & Clasificaci\'on & Sanci\'on \\
-\midrule
-$0$--$10$  & Felicitaci\'on & $0$ h \\
-$10$--$20$ & Normal         & $0$ h (advertencia) \\
-$>20$      & Multa          & $X$ h (escala con el exceso) \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-Conjuntos difusos de entrada (\emph{velocidad}): \emph{felicitacion} (trapezoidal
-$[0,0,8,11]$), \emph{normal} (triangular $[9,15,21]$), \emph{multa\_leve} (triangular
-$[19,24,30]$) y \emph{multa\_grave} (trapezoidal $[28,34,40,40]$). La salida
-\emph{horas} se defuzzifica por centroide; \emph{multa\_leve} mapea a horas moderadas
-y \emph{multa\_grave} a horas altas, de modo que la sanci\'on crece con el exceso
-(p.\,ej.\ $22$ km/h $\rightarrow 16$ h; $35$ km/h $\rightarrow 39$ h).
-
-% ================================================================
-\section{Registro de eventos (JSON)}
-% ================================================================
-Se elimin\'o PostgreSQL. Cada evento relevante se agrega a
-\texttt{registros/eventos.json} junto con la captura del fotograma
-(\texttt{capturas/}). Ejemplo:
-
-\begin{lstlisting}
-{
-  "timestamp": "2026-06-03T15:34:51",
-  "placa": "PDK-7282",
-  "velocidad_kmh": 27.0,
-  "clasificacion": "multa",
-  "horas_indisponibilidad": 16,
-  "ruta_captura": "capturas/PDK7282_20260603_153451.jpg"
-}
-\end{lstlisting}
-
-% ================================================================
-\section{Resultados experimentales}
-% ================================================================
-Se evalu\'o la votaci\'on temporal sobre los videos disponibles. Los videos
-\texttt{carros1}--\texttt{carros6} corresponden al mismo veh\'iculo, cuya placa real
-(verificada con un fotograma n\'itido) es \texttt{PDK-7282}.
-
-\begin{center}
-\begin{tabular}{llcc}
-\toprule
-Video & Consenso & Placa real & D\'igitos \\
-\midrule
-carros1  & PBK-7282 & PDK-7282 & \checkmark \\
-carros2  & PDW-2225 & (otro veh\'iculo) & --- \\
-carros3  & \textbf{PDK-7282} & PDK-7282 & \checkmark \\
-carros4  & PLK-7282 & PDK-7282 & \checkmark \\
-carros5  & PLK-7282 & PDK-7282 & \checkmark \\
-carros6  & PLK-7282 & PDK-7282 & \checkmark \\
-carros7--11 & varios & (pocas lecturas) & parcial \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\paragraph{An\'alisis.} Los \textbf{d\'igitos se reconocen al 100\,\%}. El punto d\'ebil
-es la \textbf{letra central} ($D$), que el modelo confunde con $L$ o $B$ bajo
-\emph{blur}: las letras se predicen con baja confianza (p.\,ej.\ $D=0{,}29$,
-$P=0{,}17$) porque el conjunto tiene menos muestras de letras y m\'as ruido. La
-votaci\'on acierta cuando la lectura correcta domina (carros3), pero falla cuando el
-sesgo $D\!\rightarrow\!L$ es sistem\'atico en ese clip.
-
-% ================================================================
-\section{Limitaciones y trabajo futuro}
-% ================================================================
-\begin{itemize}[nosep]
-  \item \textbf{Letras poco confiables.} Reentrenar con \emph{muestreo balanceado por
-        clase} (\texttt{WeightedRandomSampler}) y mayor resoluci\'on ($64$ px) para
-        elevar la confianza de las letras.
-  \item \textbf{Ruido del dataset.} Auto-descartar recortes de baja confianza del
-        propio modelo antes de reentrenar.
-  \item \textbf{Ambig\"uedad intr\'inseca} $O/0$, $I/1$: ya mitigada por la
-        decodificaci\'on posicional.
-  \item \textbf{Segmentaci\'on} sensible a placas muy inclinadas; podr\'ia
-        rectificarse la perspectiva antes de segmentar.
+    \item \textbf{Dropout:} Se apagan aleatoriamente (ej. 50\%) algunas neuronas multiplicando sus salidas por un filtro de Bernoulli. Matem\'aticamente, entrena un "ensamble" masivo de sub-redes compartiendo pesos.
 \end{itemize}
 
 % ================================================================
-\section{C\'omo ejecutar}
+\section{Anatom\'ia Profunda de una CNN (Convolutional Neural Network)}
 % ================================================================
-\begin{lstlisting}
-# Entrenar el clasificador de caracteres (datos reales)
-.venv/bin/python cnn/entrenar_ocr_real.py
 
-# Leer una placa de una imagen
-.venv/bin/python cnn/inferencia.py <imagen>
+\subsection{Convoluciones vs Redes Densas}
+Si una imagen tiene $48 \times 48 = 2304$ p\'ixeles, una primera capa densa oculta con 1000 neuronas requerir\'ia $2.3$ Millones de pesos. Adem\'as, destruir\'ia la estructura topol\'ogica 2D de la imagen (un p\'ixel vecino al otro pierde significado).
 
-# Pipeline completo sobre un video (ventana GUI)
-.venv/bin/python main.py video videos/carros3.mp4
+Las \textbf{Convoluciones} solucionan esto. Matem\'aticamente, el valor del mapa de caracter\'isticas $S$ en la posici\'on $(i,j)$ al aplicar un filtro (kernel) $K$ sobre la imagen $I$ es:
+\begin{equation}
+S(i,j) = (I * K)(i,j) = \sum_{m} \sum_{n} I(i+m, j+n) \cdot K(m,n)
+\end{equation}
+\textbf{Intuici\'on Did\'actica:} Imagina un filtro de Sobel para detectar l\'ineas verticales: $K = \begin{pmatrix} -1 & 0 & 1 \\ -2 & 0 & 2 \\ -1 & 0 & 1 \end{pmatrix}$. 
+Si deslizamos este filtro sobre una zona lisa (p\'ixeles todos valen 100), la operaci\'on da $(-100 + 100) + (-200 + 200) \dots = 0$ (no hay borde). Pero si lo deslizamos sobre un borde brillante a la derecha (izquierda=0, derecha=200), la salida "explota" a n\'umeros altos, detectando el borde.
+La CNN simplemente aprende los valores de estos filtros autom\'aticamente en lugar de que nosotros los programemos. Esto garantiza **Par\'ametros Compartidos** (pocos pesos) e **Invarianza Espacial** (el borde se detecta igual arriba que abajo).
 
-# Probar la logica difusa
-.venv/bin/python velocidad/logica_difusa.py
+\subsection{Jerarqu\'ia de Caracter\'isticas}
+A medida que la red profundiza:
+\begin{itemize}
+    \item \textbf{Capas Iniciales:} Aprenden filtros de Gabor (bordes, l\'ineas, gradientes).
+    \item \textbf{Capas Medias:} Combinan l\'ineas para detectar texturas o formas b\'asicas (esquinas, curvas de una "C").
+    \item \textbf{Capas Profundas:} Detectan partes de objetos complejos (el bucle de un "8", el cruce de una "X").
+\end{itemize}
+
+\subsection{MaxPooling y Arquitectura ResNet}
+El \textbf{MaxPooling} ($2\times2$) reduce la imagen a la mitad, seleccionando el p\'ixel de mayor activaci\'on en un vecindario. Esto otorga invarianza a pequeñas traslaciones.
+
+El clasificador \texttt{CNNPlacas} usa bloques \textbf{Residuales (ResNet)}. En redes est\'andar, la informaci\'on se degrada al pasar por muchas capas. ResNet introduce una \textbf{Conexi\'on de Salto} (\emph{Skip Connection}): la entrada $x$ se suma directamente a la salida de la capa $\mathcal{F}(x)$, es decir $H(x) = \mathcal{F}(x) + x$. Esto permite a la red aprender \emph{residuos} y garantiza que el gradiente fluya directamente hacia atr\'as durante el \emph{Backpropagation}.
+
+% ================================================================
+\section{Profundizaci\'on en YOLOv11 (You Only Look Once)}
+% ================================================================
+
+\subsection{Modelos de 1 Etapa vs 2 Etapas}
+Modelos cl\'asicos como \textbf{Faster R-CNN} son de dos etapas: primero proponen miles de "Regiones Candidatas" y luego clasifican cada regi\'on. Son lentos.
+\textbf{YOLO} es de 1 etapa. Trata la detecci\'on como un problema de \emph{regresi\'on} en un solo paso. Toma la imagen, la divide en una grilla $S \times S$ y de una sola vez la red predice Bounding Boxes, Confianza y Probabilidad de Clases. Es extremadamente r\'apido y apto para Tiempo Real.
+
+\subsection{Non-Maximum Suppression (NMS)}
+Como YOLO predice sobre una grilla, a menudo arroja 5 cajas superpuestas para el mismo veh\'iculo. \textbf{NMS} soluciona esto mediante la m\'etrica matem\'atica de \textbf{Intersecci\'on sobre Uni\'on (IoU)}:
+\begin{equation}
+\text{IoU}(A, B) = \frac{\text{\'Area de Intersecci\'on}}{\text{\'Area de Uni\'on}} = \frac{|A \cap B|}{|A| + |B| - |A \cap B|}
+\end{equation}
+\textbf{Intuici\'on del Algoritmo:}
+1. Ordena las cajas por Confianza y toma la mejor caja (Ej. $99\%$).
+2. Compara esta caja ganadora con todas las dem\'as. Si la f\'ormula del IoU da mayor a $0.45$, significa que las cajas se solapan demasiado (casi seguro son el mismo auto).
+3. Elimina las cajas redundantes y repite el proceso para el siguiente objeto detectado.
+
+% ================================================================
+\section{L\'ogica Difusa: Las Matem\'aticas de la Sanci\'on}
+% ================================================================
+
+Este proyecto implementa una arquitectura difusa \emph{h\'ibrida} (Mamdani para categorizaci\'on y Takagi-Sugeno para sanci\'on continua). Es crucial entender por qu\'e se abandon\'o un sistema Mamdani puro para la sanci\'on en horas.
+
+\subsection{El problema del "Serrucho" (P\'erdida de Monotonicidad en Mamdani)}
+En un inicio, la salida "horas de indisponibilidad" se model\'o con Mamdani (defuzzificaci\'on por centroide de \'areas).
+Si tenemos reglas consecutivas (Multa Leve $\rightarrow$ baja, Multa Moderada $\rightarrow$ media), y calculamos el \textbf{centroide de la uni\'on de \'areas recortadas}, ocurren ca\'idas abruptas locales (el efecto "serrucho").
+Cuando la velocidad aumenta y empieza a activar la siguiente regla, el \'area de la nueva regla al principio es peque\~na, "jalando" el centroide hacia la zona compartida, lo que matem\'aticamente produce que a \textbf{mayor velocidad, haya ligeramente menor sanci\'on localmente}. Esto viola el principio legal de proporcionalidad.
+
+\subsection{La Soluci\'on: Takagi-Sugeno de Orden Cero}
+El modelo de Sugeno descarta las \'areas de salida. El consecuente de la regla $i$ es un valor constante (un \emph{singleton}) $c_i$. La salida total $H(v)$ es el promedio de los singletons ponderado por el grado de activaci\'on $\mu_i(v)$ de cada regla:
+
+\[
+H(v) = \frac{\sum_{i=1}^{n} \mu_i(v) \cdot c_i}{\sum_{i=1}^{n} \mu_i(v)}
+\]
+
+Dado que los singletons son estrictamente crecientes ($c_1 < c_2 < \dots < c_n$) y los antecedentes teselan el espacio (tri\'angulos solapados 50\%), la curva resultante $H(v)$ es \textbf{estrictamente mon\'otona y suave}. A m\'as velocidad, \textbf{siempre} hay m\'as sanci\'on.
+
+\subsection{Las 5 Reglas Expl\'icitas del Sistema de Sanci\'on}
+Solo cuando el sistema Mamdani de nivel superior detecta la categor\'ia \textbf{Multa} ($>20$ km/h), se aplica la evaluaci\'on Sugeno de horas:
+
+\begin{lstlisting}[language=Python]
+_REGLAS_SUGENO = [
+    # (nombre,        [params MF_entrada],   singleton_salida_horas)
+    ("multa_leve",     [20, 24, 28],            5),   # Exceso  1-8  km/h -> 5h
+    ("multa_moderada", [24, 28, 32],           18),   # Exceso  5-12 km/h -> 18h
+    ("multa_alta",     [28, 32, 36],           34),   # Exceso  9-16 km/h -> 34h
+    ("multa_grave",    [32, 36, 40],           52),   # Exceso 13-20 km/h -> 52h
+    ("multa_extrema",  [36, 40, 40, 40],       70),   # Exceso >=16  km/h -> 70h
+]
 \end{lstlisting}
+
+% ================================================================
+\section{Glosario R\'apido de Conceptos de IA}
+% ================================================================
+\begin{description}[leftmargin=!,labelwidth=4cm]
+    \item[\textbf{Epoch (Época)}] Una pasada completa de \emph{todos} los datos de entrenamiento a trav\'es de la red neuronal.
+    \item[\textbf{Batch Size}] El n\'umero de ejemplos procesados antes de actualizar los pesos del modelo. Usamos 256 para estabilidad del gradiente.
+    \item[\textbf{Learning Rate (Tasa de aprendizaje)}] El tama\~no del paso de correcci\'on de los pesos. Se usa un \emph{planificador OneCycleLR} (empieza bajo, sube a un pico, y baja asint\'oticamente).
+    \item[\textbf{AMP (Automatic Mixed Precision)}] Uso de formato FP16 (16 bits) en vez de FP32 (32 bits) en la GPU. Duplica la velocidad de entrenamiento y reduce el uso de VRAM a la mitad sin perder precisi\'on algor\'itmica.
+    \item[\textbf{Label Smoothing}] En vez de forzar a la red a predecir 100\% de confianza para la respuesta correcta (vector $[0, 0, 1, 0]$), se asigna un 95\% a la correcta y 5\% distribuido al resto. Esto evita sobreconfianza y \emph{overfitting}.
+\end{description}
+
+\newpage
+% ================================================================
+\section{Banco de Preguntas para la Defensa (Simulador)}
+% ================================================================
+Esta secci\'on contiene el n\'ucleo para la defensa. El profesor intentar\'a buscar huecos en la l\'ogica del estudiante.
+
+\begin{trampa}{¿Por qu\'e no entrenaron una red (CNN/YOLO) para estimar la velocidad directamente de la imagen?}
+    \textbf{Respuesta:} "Porque estimar velocidad desde un sensor monocular (1 sola c\'amara) mediante deep learning puro es un problema sub-determinado y prono a errores masivos."\\
+    Un modelo CNN requerir\'ia mapeo 3D a 2D (estimaci\'on de profundidad y matriz de calibraci\'on intr\'inseca de la c\'amara) que var\'ia dependiendo de cu\'anto zoom se aplique o el tama\~no del auto. Nuestro enfoque geom\'etrico con dos \textbf{l\'ineas virtuales de distancia conocida} se rige por F\'isica Cl\'asica ($v = \Delta d / \Delta t$) y garantiza determinismo absoluto sin requerir calibraci\'on est\'ereo ni lidar.
+\end{trampa}
+
+\begin{pregunta}{¿Por qu\'e desecharon Otsu en la segmentaci\'on de caracteres?}
+    \textbf{Respuesta:} "El m\'etodo Otsu asume que la imagen tiene un histograma bimodal estricto (fondo y texto bien separados). En un ambiente al aire libre, un extremo de la placa puede tener sol directo y el otro la sombra del maletero del auto. El umbral global de Otsu promedia esto y destruye el texto en la sombra o quema el texto en el sol. Usamos \textbf{Umbral Adaptativo Gaussiano} porque calcula el umbral p\'ixel a p\'ixel en funci\'on de su vecindad local ($21\times 21$ píxeles), mitigando por completo las gradientes de luz."
+\end{pregunta}
+
+\begin{trampa}{Si su l\'ogica difusa es tan precisa para dar las horas de sanci\'on, ¿por qu\'e no usaron una funci\'on matem\'atica simple, tipo $f(x) = (x - 20) \times 3$?}
+    \textbf{Respuesta:} "Por la \textbf{capacidad de modelado experto} que ofrece la l\'ogica difusa." \\
+    Una funci\'on lineal o polinomial trata todas las infracciones con la misma sensibilidad. La l\'ogica difusa nos permite modelar la \textbf{heur\'istica humana y legal}: la transici\'on de leve a moderado requiere un nivel de severidad distinto al de grave a extremo. Al definir conjuntos difusos traslapados, podemos establecer mesetas, rampas de transici\'on suave y umbrales no-lineales basados en reglas l\'ingü\'isticas (IF 'velocidad es alta' THEN 'sanción es moderada'), lo cual es imposible de codificar de forma interpretable con una simple f\'ormula $f(x)$ o con r\'igidos If-Else que generan saltos abruptos.
+\end{trampa}
+
+\begin{pregunta}{En su clasificador CNN usaron Softmax. ¿Cu\'al es la diferencia entre Softmax y Sigmoide y por qu\'e no usaron Sigmoide?}
+    \textbf{Respuesta:} "La Sigmoide comprime cualquier n\'umero al rango $[0,1]$ de forma independiente, asumiendo que un input podr\'ia pertenecer a m\'ultiples clases a la vez (\emph{Multi-label classification}). El \textbf{Softmax} escala las salidas de modo que \textbf{la suma de todas las probabilidades de las 36 clases sea exactamente 1.0} (\emph{Multi-class classification}). Como un car\'acter en la placa solo puede ser \textbf{una sola cosa} (es una 'A' o es una 'B', no ambas), Softmax obliga a las probabilidades a competir entre s\'i, dando una distribuci\'on de confianza real."
+\end{pregunta}
+
+\begin{trampa}{Si imprimo una placa falsa en un papel y camino frente a su c\'amara, ¿me multan?}
+    \textbf{Respuesta:} "S\'i y no. YOLO detectar\'ia la placa porque su patr\'on visual existe (bordes, texto). Sin embargo, el \textbf{filtro de clases} de nuestro tracker asocia la detecci\'on al \emph{objeto padre} (Auto, Moto, Camión, Bus en COCO). Si una persona lleva el cart\'on, YOLO clasifica a la persona como \texttt{person} (clase 0) y no como veh\'iculo (clases 2,3,5,7). Como solo medimos cruce de l\'ineas para veh\'iculos vivos, el peat\'on con el cart\'on no disparar\'ia el flujo de velocidad."
+\end{trampa}
+
+\begin{pregunta}{He visto que su modelo CNN fue entrenado con placas de la India. ¿C\'omo es posible que funcione en placas Ecuatorianas?}
+    \textbf{Respuesta:} "Esta es una distinci\'on clave de nuestra arquitectura. Si hubi\'eramos usado una red OCR \emph{End-to-End} (que lee toda la imagen de corrido, como CRNN), el modelo habr\'ia aprendido a leer el formato y la fuente de la India, fallando en Ecuador. 
+    Nosotros dividimos el problema: primero extraemos los caracteres sueltos mediante algoritmos de visi\'on (Contornos y Componentes Conexos) y nuestra CNN s\'olo clasifica recortes individuales de $48\times 48$. \textbf{El n\'umero '5' o la letra 'M' de una placa de la India es tipogr\'aficamente id\'entico al de Ecuador}. El modelo de \emph{Deep Learning} solo reconoce los glifos universales; la l\'ogica del formato ecuatoriano (ABC-NNNN) la aplicamos nosotros en el software."
+\end{pregunta}
+
+\begin{trampa}{Me dicen que usan "Votaci\'on Temporal" porque el OCR falla. ¿Su red neuronal es mala?}
+    \textbf{Respuesta:} "No, nuestra red tiene un \textbf{93.6\% de precisi\'on por car\'acter}, lo cual es excelente considerando el ruido exterior. El problema es estoc\'astico: si una placa tiene 7 caracteres, la probabilidad de leer la placa perfecta en un s\'olo \emph{frame} es $0.936^7 \approx 62\%$. 
+    Sin embargo, el veh\'iculo aparece en nuestro campo de visi\'on durante unos 10-15 frames. El error causado por el ruido (\emph{motion blur}, sol, una gota de lluvia) es \textbf{aleatorio}, mientras que el car\'acter correcto es \textbf{constante}. Al acumular las lecturas y aplicar la Moda Matem\'atica por columna (Votaci\'on Temporal), el ruido aleatorio se cancela y la se\~nal constante emerge, d\'andonos secuencias correctas con una precisi\'on pr\'actica cercana al 100\%."
+\end{trampa}
+
+\begin{pregunta}{Veo que usan $lr=10^{-3}$ y AdamW. ¿Por qu\'e AdamW en vez del m\'as famoso Adam regular?}
+    \textbf{Respuesta:} "AdamW (Adam con Weight Decay acoplado) soluciona un error matem\'atico en la implementaci\'on original de Adam en PyTorch. Adam aplica la regularizaci\'on L2 (\emph{weight decay}) dentro del c\'alculo de los promedios m\'oviles del gradiente, lo que hace que la regularizaci\'on pierda fuerza, causando sobreajuste. \textbf{AdamW separa el \emph{weight decay}} sum\'andolo directamente a los pesos despu\'es de la optimizaci\'on de gradiente, logrando que el modelo generalice mejor frente a datos no vistos."
+\end{pregunta}
+
+\begin{trampa}{En su \texttt{pipeline.py} vi que asignan un 'presupuesto' de OCR = 1 por frame. ¿Qu\'e pasa si pasan dos veh\'iculos exactamente al mismo tiempo y cruzan la l\'inea?}
+    \textbf{Respuesta:} "Ambos ser\'an detectados y su velocidad ser\'a medida, ya que YOLO y el Tracker (ByteTrack) son algoritmos paralelos y calculan el \emph{bounding box} de todos en cada frame. 
+    Respecto a la placa, el presupuesto de $OCR=1$ hace que el sistema clasifique la placa del auto que tenga el \textbf{\'area m\'as grande en pantalla} (sort por \'area). Como los autos cruzan en milisegundos distintos, el auto m\'as cercano consume el OCR durante unos frames, y una vez que pasa, el siguiente auto se vuelve el de mayor \'area y hereda el presupuesto. Como tenemos de 10 a 15 frames efectivos en la zona de c\'amara lenta por segundo, hay frames m\'as que suficientes para atender a ambos de forma s\'incrona sin bloquear el sistema."
+\end{trampa}
+
+\begin{pregunta}{¿Qu\'e es el hiperpar\'ametro 'IoU' en YOLO y por qu\'e es crucial para su tracker?}
+    \textbf{Respuesta:} "IoU (Intersection over Union) es la medida de solapamiento entre dos Bounding Boxes (Área de Intersecci\'on dividida para el Área de Uni\'on). El tracker ByteTrack lo usa para el \emph{Data Association}: si en el frame $T$ hay una caja de auto y en el frame $T+1$ hay otra, el algoritmo calcula su IoU espacial. Si es muy alto (las cajas se solapan), el tracker concluye que es exactamente \textbf{el mismo auto} movi\'endose y le mantiene su ID único. Sin IoU, el tracker no sabr\'ia c\'omo unir las detecciones entre \emph{frames}."
+\end{pregunta}
+
+\begin{trampa}{Si su modelo tiene 1.2 millones de par\'ametros y el dataset de entrenamiento tiene 50,000 im\'agenes, ¿no se aprendi\'o el dataset de memoria (Overfitting)?}
+    \textbf{Respuesta:} "No, porque aplicamos fuertes t\'ecnicas de \textbf{Regularizaci\'on}. Si bien los par\'ametros superan a las im\'agenes, usamos \textbf{Data Augmentation} en tiempo real (rotaciones aleatorias, escalado, ruido de brillo), lo que hace que la red nunca vea exactamente la misma imagen dos veces. Adem\'as, usamos \textbf{Dropout} en la arquitectura, obligando a que la red no pueda depender de caminos neuronales espec\'ificos, y \textbf{Weight Decay} (AdamW) que penaliza pesos muy grandes. Esto se comprueba porque nuestra precisi\'on en el set de Entrenamiento es similar a la del set de Validaci\'on/Test: si hubiera overfitting, tendr\'iamos 99\% en entrenamiento y 70\% en Test, pero tenemos $\sim 91\%$ en ambos."
+\end{trampa}
+
+\begin{pregunta}{¿Qu\'e pasar\'ia si paso una imagen de la placa completamente Negra (pixeles en 0) a su modelo CNN?}
+    \textbf{Respuesta:} "La red har\'ia los c\'alculos matem\'aticos normales (multiplicar 0 por los pesos), lo que resultar\'ia en que el sumatorio de la primera capa oculta solo depender\'ia de los \textbf{Bias} (sesgos) de las neuronas. Eventualmente, llegaremos a los \emph{logits} finales. Al aplicar la funci\'on \textbf{Softmax}, se obtendr\'ia un vector de probabilidades que no tendr\'a sentido, pero cuya suma dar\'a exactamente 1.0. Probablemente arrojar\'a la clase con el sesgo m\'as alto aprendido durante el entrenamiento, pero con una confianza (probabilidad) sumamente baja y repartida entre todas las clases, evidenciando que no hay un patr\'on."
+\end{pregunta}
+
+\begin{trampa}{Dicen que usan un 'Umbral Gaussiano'. Si la sombra oscurece la mitad de la placa, el Gaussiano bajar\'a el umbral. ¿Qu\'e impide que el ruido negro del asfalto en el fondo tambi\'en se binarice como blanco?}
+    \textbf{Respuesta:} "Esa es una excelente observaci\'on sobre el Adaptive Thresholding. El umbral baja tanto en zonas oscuras que el ruido de fondo efectivamente puede binarizarse. Sin embargo, no nos importa, porque \textbf{solo aplicamos el umbral adaptativo sobre el Bounding Box apretado que ya recort\'o YOLO}. Como YOLO recorta estrictamente la chapa met\'alica de la placa, casi no hay asfalto en nuestro recorte. Adem\'as, la etapa posterior de filtrado de contornos exige proporciones de Altura, Ancho y Área para considerar a un \emph{blob} como un car\'acter v\'alido. El ruido granulado que se genera se descarta en el filtrado por \'area m\'inima."
+\end{trampa}
 
 \end{document}

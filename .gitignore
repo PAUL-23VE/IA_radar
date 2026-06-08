@@ -10,20 +10,13 @@ __pycache__/
 .claude/
 
 # Salidas generadas en ejecución
-capturas/
-registros/
+outputs/
 output_test/
 resultado.jpg
-dev_outputs/
 runs/
 
-# Datasets (grandes, no versionar)
+# Datasets y videos (grandes, no versionar)
 data/
-Dataset_OCR_Placas/
-dataset_propio/
-
-# Videos de prueba
-videos/
 
 # Modelos descargados por ultralytics
 yolov8n.pt
@@ -46,3 +39,17 @@ docs/*.out
 docs/*.fls
 docs/*.fdb_latexmk
 docs/*.toc
+
+# Repos de referencia de compañeros (no versionar)
+deteccion-placas-bgn/
+Plate_Detection_Segmentation_OCR_sin_dependencias/
+Informe.pdf
+
+# Artefactos de compilacion LaTeX
+informe/*.aux
+informe/*.log
+informe/*.fls
+informe/*.fdb_latexmk
+informe/*.out
+informe/*.synctex.gz
+informe/*.toc

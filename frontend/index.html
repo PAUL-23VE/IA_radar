@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radar de Placas Inteligente</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        
+        <!-- Sidebar Dashboard -->
+        <aside class="dashboard glass-panel">
+            <div class="brand">
+                <div class="logo-dot"></div>
+                <h1>RADAR AI</h1>
+            </div>
+            
+            <div class="control-panel">
+                <h3>Configuración de Fuente</h3>
+                <div class="input-group">
+                    <label for="source-type">Tipo de Entrada</label>
+                    <select id="source-type">
+                        <option value="camera">Cámara Web</option>
+                        <option value="video">Archivo de Video</option>
+                        <option value="image">Imagen(es) Estática(s)</option>
+                        <option value="stream">Stream Digital (URL)</option>
+                    </select>
+                </div>
+                
+                <div class="input-group" id="source-camera-group" style="display: flex;">
+                    <label for="source-camera-index">Índice de Cámara</label>
+                    <input type="number" id="source-camera-index" min="0" value="0" step="1">
+                    <small style="color: rgba(255,255,255,0.5); font-size: 11px; margin-top: 4px; display: block;">Ingresa el índice de la webcam USB o la cámara integrada (0, 1, 2...).</small>
+                </div>
+
+                <div class="input-group" id="velocity-distance-group" style="display: flex;">
+                    <label for="velocity-distance">Distancia entre líneas (m)</label>
+                    <input type="number" id="velocity-distance" min="0.1" value="5.0" step="0.1">
+                    <small style="color: rgba(255,255,255,0.5); font-size: 11px; margin-top: 4px; display: block;">Distancia real entre las dos líneas de medición usadas para calcular velocidad.</small>
+                </div>
+                
+                <div class="input-group" id="source-path-group" style="display: none;">
+                    <label for="source-path">URL del Stream (DroidCam / Cámara IP)</label>
+                    <input type="text" id="source-path" placeholder="http://192.168.x.x:4747/video">
+                    <small style="color: rgba(255,255,255,0.5); font-size: 11px; margin-top: 4px; display: block;">DroidCam Android: http://IP:4747/video &nbsp;|&nbsp; iOS (DroidCam): misma URL</small>
+                </div>
+
+                <div class="input-group" id="source-file-group" style="display: none;">
+                    <label for="source-file">Seleccionar Video</label>
+                    <div class="file-picker-wrapper">
+                        <label for="source-file" class="file-picker-btn">Buscar archivo...</label>
+                        <input type="file" id="source-file" accept="video/*" style="display: none;">
+                        <span class="file-picker-name" id="file-picker-name">Ningún archivo seleccionado</span>
+                    </div>
+                </div>
+
+                <div class="input-group" id="source-image-group" style="display: none;">
+                    <label for="source-image">Seleccionar Imagen(es)</label>
+                    <div class="file-picker-wrapper">
+                        <label for="source-image" class="file-picker-btn">Buscar imágenes...</label>
+                        <input type="file" id="source-image" accept="image/*" multiple style="display: none;">
+                        <span class="file-picker-name" id="image-picker-name">Ninguna imagen seleccionada</span>
+                    </div>
+                </div>
+                
+                <div class="actions">
+                    <button id="btn-start" class="btn primary">Iniciar Radar</button>
+                    <button id="btn-stop" class="btn danger" disabled>Detener</button>
+                </div>
+            </div>
+
+            <div class="status-panel">
+                <div class="status-indicator">
+                    <div class="status-dot" id="system-status-dot"></div>
+                    <span id="system-status-text">Sistema Detenido</span>
+                </div>
+            </div>
+            
+            <div class="live-metrics">
+                <div class="metric-card focus">
+                    <span class="label">VELOCIDAD</span>
+                    <div class="value-container">
+                        <span id="current-speed">0.0</span>
+                        <span class="unit">km/h</span>
+                    </div>
+                </div>
+                
+                <div class="metric-card status-normal" id="plate-card">
+                    <span class="label">ÚLTIMA PLACA</span>
+                    <div class="value-container">
+                        <span id="current-plate" class="mono">---</span>
+                    </div>
+                    <div class="status-tag" id="current-classification">ESPERANDO</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-view">
+            <header class="view-header glass-panel">
+                <h2>Visualización en Tiempo Real</h2>
+                <div class="hints">
+                    Arrastra los puntos naranjas y rojos para calibrar las líneas de medición de velocidad
+                </div>
+            </header>
+            
+            <div class="video-container glass-panel">
+                <!-- Capa de video MJPEG -->
+                <img id="video-stream" src="" alt="Video Feed" style="display: none;">
+                <!-- Capa interactiva de Canvas -->
+                <canvas id="overlay-canvas"></canvas>
+                
+                <!-- Controles de video interactivos -->
+                <div id="playback-controls" class="playback-controls" style="display: none;">
+                    <button class="btn icon-btn" id="btn-restart" title="Volver al inicio">⏮</button>
+                    <button class="btn icon-btn" id="btn-seek-bwd" title="Retroceder 5s">⏪</button>
+                    <button class="btn icon-btn" id="btn-toggle-pause" title="Pausar/Reanudar">⏸</button>
+                    <button class="btn icon-btn" id="btn-seek-fwd" title="Adelantar 5s">⏩</button>
+                    <div class="input-group" style="width: auto;" id="playback-speed-group">
+                        <select id="playback-speed" style="padding: 5px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px; outline: none; margin-left: 10px;">
+                            <option value="0.25">0.25x</option>
+                            <option value="0.5">0.5x</option>
+                            <option value="1.0" selected>1.0x</option>
+                            <option value="1.5">1.5x</option>
+                            <option value="2.0">2.0x</option>
+                        </select>
+                    </div>
+                    <div id="image-nav-group" style="display: none; margin-left: 15px; color: #fff; font-size: 14px; align-items: center; gap: 10px;">
+                        <button id="btn-prev-image" class="btn" style="padding: 4px 8px; font-size: 12px; min-width: 0;">Anterior</button>
+                        <span id="image-counter">0/0</span>
+                        <button id="btn-next-image" class="btn" style="padding: 4px 8px; font-size: 12px; min-width: 0;">Siguiente</button>
+                    </div>
+                </div>
+                
+                <!-- Placeholder -->
+                <div id="video-placeholder">
+                    <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" stroke-width="1.5" fill="none">
+                        <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14v-4z" />
+                        <rect x="3" y="6" width="12" height="12" rx="2" ry="2" />
+                    </svg>
+                    <p>Inicia el radar para ver la cámara</p>
+                </div>
+            </div>
+            
+            <div class="recent-events glass-panel">
+                <div class="events-header">
+                    <h3>Últimos Eventos</h3>
+                    <span class="events-counter" id="events-counter">0 eventos</span>
+                </div>
+                <div class="events-grid" id="events-list">
+                    <div class="events-empty" id="events-empty">
+                        <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.4">
+                            <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+                        </svg>
+                        <span>Los eventos aparecerán aquí</span>
+                    </div>
+                </div>
+            </div>
+        </main>
+        
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast-container"></div>
+
+    <!-- Event Zoom Modal -->
+    <div id="event-modal" class="event-modal" style="display:none;">
+        <div class="event-modal-backdrop" id="modal-backdrop"></div>
+        <div class="event-modal-content glass-panel">
+            <button class="modal-close" id="modal-close" title="Cerrar">✕</button>
+            <div class="modal-img-wrapper">
+                <img id="modal-img" src="" alt="Captura del evento">
+            </div>
+            <div class="modal-info">
+                <div class="modal-plate" id="modal-plate">---</div>
+                <div class="modal-meta">
+                    <div class="modal-meta-row">
+                        <span class="modal-label">VELOCIDAD</span>
+                        <span class="modal-value" id="modal-speed">---</span>
+                    </div>
+                    <div class="modal-meta-row">
+                        <span class="modal-label">CLASIFICACIÓN</span>
+                        <span class="modal-badge" id="modal-clasif">---</span>
+                    </div>
+                    <div class="modal-meta-row">
+                        <span class="modal-label">SANCIÓN</span>
+                        <span class="modal-value" id="modal-sancion">Sin sanción</span>
+                    </div>
+                    <div class="modal-meta-row">
+                        <span class="modal-label">HORA</span>
+                        <span class="modal-value" id="modal-hora">---</span>
+                    </div>
+                </div>
+                <div class="modal-chart-wrapper" id="modal-chart-wrapper">
+                    <div class="modal-chart-title">Razonamiento de Lógica Difusa</div>
+                    <img id="modal-chart" src="" alt="Inferencia difusa">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

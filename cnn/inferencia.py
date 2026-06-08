@@ -36,14 +36,15 @@ from modelo import crear_modelo_cnn  # noqa: E402
 #  Configuración
 # ----------------------------------------------------------------
 RUTA_YOLO = os.getenv("YOLO_MODEL_PATH", "best.pt")
-RUTA_CNN  = os.path.join(os.path.dirname(__file__), "..", "models", "ocr_char.pt")
-CONF_PLACA = 0.15
+RUTA_CNN  = os.getenv("OCR_CNN_PATH",
+                      os.path.join(os.path.dirname(__file__), "..", "models", "ocr_char.pt"))
+CONF_PLACA = 0.10
 
 IMG_SIZE = 32  # tamaño de entrada del clasificador (se sobrescribe con el del checkpoint)
 
-# Confianza mínima media de los caracteres para aceptar una lectura.
-# El filtro principal de falsos positivos es la validación de formato ABC-NNNN.
-CONF_CNN_MIN = 0.35
+# Confianza mínima: 0.0 para aceptar cualquier lectura con formato valido.
+# El filtro real es la validacion de formato ABC-NNNN, no la confianza.
+CONF_CNN_MIN = 0.30
 
 # Singletons — thread-safe
 _lock         = threading.Lock()
@@ -165,74 +166,211 @@ def _preparar_gris(recorte: np.ndarray) -> np.ndarray:
 #  3. Segmentación de caracteres
 # ----------------------------------------------------------------
 
+def _binarizar_texto(g: np.ndarray) -> np.ndarray:
+    """
+    Umbral ADAPTATIVO (local): texto (oscuro) → blanco. Local, no global, para
+    no confundirse con el cuerpo oscuro del auto alrededor de la placa (Otsu
+    global invertía la polaridad y dejaba el texto en negro).
+
+    Ajusta el blockSize a la altura del recorte para que cubra ~1 carácter.
+    """
+    h = g.shape[0]
+    # Cap a 51: blockSizes > 51 (placas grandes h > ~85px) degradan la binarización
+    # porque el vecindario captura el carácter completo en lugar del entorno local.
+    bs = max(11, min(int(h * 0.6) | 1, 51))
+    binimg = cv2.adaptiveThreshold(
+        g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, 9,
+    )
+    # Polaridad: en una placa el texto es MINORÍA. Si el blanco domina el centro,
+    # la placa es de texto claro / fondo oscuro → invertir.
+    cy0, cy1 = int(h * 0.3), int(h * 0.7)
+    centro = binimg[cy0:cy1]
+    if centro.size and np.count_nonzero(centro) > centro.size * 0.5:
+        binimg = cv2.bitwise_not(binimg)
+    return binimg
+
+
+def _cajas_caracter(binimg: np.ndarray, H: int, W: int) -> list[tuple]:
+    """Componentes conexos filtrados a candidatos de carácter (x,y,w,h)."""
+    n, _, stats, _ = cv2.connectedComponentsWithStats(binimg, connectivity=8)
+    cajas = []
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        if h < 0.30 * H or h > 0.97 * H:
+            continue
+        rel = w / h
+        if rel < 0.08 or rel > 1.4:
+            continue
+        if area < 0.006 * H * W:
+            continue
+        cajas.append((x, y, w, h))
+    return cajas
+
+
+def _aislar_banda(gris: np.ndarray) -> np.ndarray:
+    """
+    Aísla la banda de la fila principal de caracteres (ABC-1234), descartando
+    el encabezado 'ECUADOR', el logo ANT, tornillos, marco y carrocería.
+
+    Estrategia: componentes conexos primero (rápido, preciso para placas normales).
+    Si CC no encuentra cajas válidas (chars fusionados en placas grandes / con
+    carrocería incluida), cae a proyección horizontal por fila.
+
+    Normaliza a MAX_H_NORM=64 antes de binarizar para blockSize estable.
+    """
+    h0, w0 = gris.shape[:2]
+
+    MAX_H_NORM = 64
+    if h0 > MAX_H_NORM:
+        escala_n = MAX_H_NORM / h0
+        gris_n = cv2.resize(gris, (max(1, int(w0 * escala_n)), MAX_H_NORM),
+                            interpolation=cv2.INTER_LINEAR)
+    else:
+        escala_n = 1.0
+        gris_n = gris
+    hn, wn = gris_n.shape[:2]
+
+    binimg = _binarizar_texto(gris_n)
+
+    # ── Método 1: componentes conexos ────────────────────────────────────
+    cajas = _cajas_caracter(binimg, hn, wn)
+    if len(cajas) >= 2:
+        alturas = np.array([c[3] for c in cajas], dtype=np.float32)
+        h_med = float(np.median(alturas))
+        grandes = [c for c in cajas if c[3] >= 0.7 * h_med]
+        if len(grandes) < 2:
+            grandes = cajas
+        ys = [c[1] for c in grandes]
+        ye = [c[1] + c[3] for c in grandes]
+        y0_n = max(0, int(np.median(ys) - 0.18 * h_med))
+        y1_n = min(hn, int(np.median(ye) + 0.18 * h_med))
+        if 0.15 * hn <= (y1_n - y0_n) < 0.92 * hn:
+            inv = 1.0 / escala_n
+            y0 = max(0, int(y0_n * inv))
+            y1 = min(h0, int(y1_n * inv))
+            if y1 - y0 >= 4:
+                return gris[y0:y1]
+
+    # ── Método 2: proyección horizontal (fallback para placas grandes) ───
+    # Suma de píxeles blancos por fila → densidad vertical de texto.
+    proj = binimg.sum(axis=1).astype(np.float32)
+    pmax = proj.max()
+    if pmax == 0:
+        return gris
+    proj /= pmax
+
+    active = proj > 0.20
+    if active.sum() < 4:
+        return gris
+
+    # Encontrar todos los bloques activos y seleccionar el de mayor densidad·raíz(longitud)
+    blocks = []
+    in_block = False
+    cur_start = 0
+    for i, a in enumerate(active):
+        if a and not in_block:
+            cur_start = i; in_block = True
+        elif not a and in_block:
+            blocks.append((cur_start, i))
+            in_block = False
+    if in_block:
+        blocks.append((cur_start, hn))
+
+    if not blocks:
+        return gris
+
+    def _score(b):
+        s, e = b
+        length = e - s
+        density = float(proj[s:e].mean()) if length > 0 else 0.0
+        return density * (length ** 0.5)
+
+    bs, be = max(blocks, key=_score)
+    mejor_len = be - bs
+    margen = max(3, int(mejor_len * 0.20))
+    y0_n = max(0, bs - margen)
+    y1_n = min(hn, be + margen)
+
+    if (y1_n - y0_n) >= 0.92 * hn or (y1_n - y0_n) < 0.12 * hn:
+        return gris
+
+    inv = 1.0 / escala_n
+    y0 = max(0, int(y0_n * inv))
+    y1 = min(h0, int(y1_n * inv))
+    if y1 - y0 < 4:
+        return gris
+    return gris[y0:y1]
+
+
 def _segmentar_caracteres(gris: np.ndarray) -> list[np.ndarray]:
     """
-    Segmenta los caracteres de un recorte de placa en escala de grises.
+    Segmenta los caracteres de la fila principal de una placa.
 
-    Estrategia:
-      - reescala a altura fija (mejor estabilidad de los umbrales)
-      - binariza con Otsu, asegurando que el texto sea blanco (minoría)
-      - componentes conexos filtrados por alto/aspecto/área
-      - ordena por X y devuelve los recortes EN GRIS (no binarios), que es
-        el dominio con el que se entrenó el clasificador.
+    Pipeline:
+      1. aísla la banda de caracteres (sin encabezado ECUADOR / logo / tornillos)
+      2. reescala a altura fija
+      3. binariza (Otsu inverso) + componentes conexos
+      4. filtra por altura/aspecto/área y clúster de altura (mediana)
+      5. parte componentes fusionados (chars pegados) por ancho mediano
+      6. devuelve recortes EN GRIS, ordenados izquierda → derecha
 
     Returns:
-        lista de recortes en gris (uint8), ordenados de izquierda a derecha.
+        lista de recortes en gris (uint8).
     """
+    banda = _aislar_banda(gris)
+
     H_OBJ = 64
-    h0, w0 = gris.shape[:2]
+    h0, w0 = banda.shape[:2]
     if h0 == 0 or w0 == 0:
         return []
     escala = H_OBJ / h0
-    g = cv2.resize(gris, (max(1, int(w0 * escala)), H_OBJ), interpolation=cv2.INTER_LINEAR)
+    g = cv2.resize(banda, (max(1, int(w0 * escala)), H_OBJ), interpolation=cv2.INTER_LINEAR)
     H, W = g.shape
 
-    # Umbral ADAPTATIVO: separa caracteres bajo iluminación irregular y blur,
-    # donde Otsu global fusionaba toda la placa en un solo blob. Texto oscuro
-    # sobre fondo claro → foreground (texto) BLANCO.
-    binimg = cv2.adaptiveThreshold(
-        g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 9,
-    )
-    if np.count_nonzero(binimg) > binimg.size * 0.5:   # placa con texto claro/fondo oscuro
-        binimg = cv2.bitwise_not(binimg)
-
-    # Despeckle (quita ruido sal/pimienta sin unir caracteres adyacentes)
+    binimg = _binarizar_texto(g)
     binimg = cv2.morphologyEx(
         binimg, cv2.MORPH_OPEN,
         cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)),
     )
 
-    n, _, stats, _ = cv2.connectedComponentsWithStats(binimg, connectivity=8)
-
-    cajas = []
-    for i in range(1, n):  # 0 = fondo
-        x, y, w, h, area = stats[i]
-        # Altura típica de carácter (el recorte de YOLO suele traer margen, por
-        # eso el umbral inferior es bajo; los outliers se filtran luego por mediana)
-        if h < 0.25 * H or h > 0.95 * H:
-            continue
-        rel = w / h
-        if rel < 0.10 or rel > 1.3:           # descartar barras/ruido y bloques anchos
-            continue
-        if area < 0.008 * H * W:
-            continue
-        cajas.append((x, y, w, h))
-
+    cajas = _cajas_caracter(binimg, H, W)
     if not cajas:
         return []
 
-    # Filtrar outliers de altura respecto a la mediana (ruido, marcos)
-    alturas = np.array([c[3] for c in cajas], dtype=np.float32)
-    h_med   = float(np.median(alturas))
-    cajas   = [c for c in cajas if 0.6 * h_med <= c[3] <= 1.4 * h_med]
-    cajas.sort(key=lambda c: c[0])  # orden izquierda → derecha
+    # Clúster de altura + centro vertical: los caracteres de la fila principal
+    # comparten altura y línea base. El logo ANT, el encabezado ECUADOR residual
+    # y el ruido tienen otra altura o están desplazados verticalmente → fuera.
+    h_med = float(np.median([c[3] for c in cajas]))
+    cy_med = float(np.median([c[1] + c[3] / 2 for c in cajas]))
+    cajas = [c for c in cajas
+             if 0.72 * h_med <= c[3] <= 1.3 * h_med
+             and abs((c[1] + c[3] / 2) - cy_med) <= 0.28 * h_med]
+    if not cajas:
+        return []
+    cajas.sort(key=lambda c: c[0])
+
+    # Partir componentes fusionados (dos chars pegados → 1 caja ancha)
+    anchos = sorted(c[2] for c in cajas)
+    w_med = anchos[len(anchos) // 2]
+    partidas = []
+    for x, y, w, h in cajas:
+        k = int(round(w / w_med)) if w_med > 0 else 1
+        if k >= 2 and w > 1.5 * w_med:        # caja anormalmente ancha → dividir
+            paso = w // k
+            for j in range(k):
+                partidas.append((x + j * paso, y, paso, h))
+        else:
+            partidas.append((x, y, w, h))
+    cajas = partidas
 
     recortes = []
     for x, y, w, h in cajas:
-        m = max(1, int(0.12 * h))             # padding alrededor del carácter
+        m = max(1, int(0.12 * h))
         y1 = max(0, y - m); y2 = min(H, y + h + m)
         x1 = max(0, x - m); x2 = min(W, x + w + m)
-        recortes.append(g[y1:y2, x1:x2])
+        rc = g[y1:y2, x1:x2]
+        if rc.size:
+            recortes.append(rc)
     return recortes
 
 
@@ -272,29 +410,48 @@ def _indices_grupos() -> tuple[list[int], list[int]]:
     return letras, digitos
 
 
-def _decodificar_posicional(probs: np.ndarray) -> tuple[str, float]:
-    """
-    Decodifica explotando el formato ecuatoriano ABC-NNNN: las primeras 3
-    posiciones son letras y las restantes dígitos. Restringir cada carácter a
-    su grupo elimina las confusiones cruzadas O↔0, I↔1, Z↔2, B↔8, S↔5
-    (las más frecuentes), aumentando mucho la precisión a nivel de placa.
-
-    Solo aplica cuando hay 6 o 7 caracteres segmentados (placa EC válida).
-    Retorna ("", 0.0) si no aplica.
-    """
-    n = probs.shape[0]
-    if n not in (6, 7):
-        return "", 0.0
-
+def _decodificar_ventana(probs: np.ndarray, ini: int, largo: int) -> tuple[str, float]:
+    """Decodifica probs[ini:ini+largo] con el patrón EC: 3 letras + dígitos."""
     letras, digitos = _indices_grupos()
     chars, confs = [], []
-    for i in range(n):
-        grupo = letras if i < 3 else digitos
-        j     = grupo[int(np.argmax(probs[i, grupo]))]
+    for k in range(largo):
+        grupo = letras if k < 3 else digitos
+        j = grupo[int(np.argmax(probs[ini + k, grupo]))]
         chars.append(_classes[j])
-        confs.append(float(probs[i, j]))
-
+        confs.append(float(probs[ini + k, j]))
     return "".join(chars), float(np.mean(confs))
+
+
+def _decodificar_posicional(probs: np.ndarray) -> tuple[str, float]:
+    """
+    Decodifica explotando el formato ecuatoriano ABC-NNNN: 3 letras + 3-4
+    dígitos. Restringir cada carácter a su grupo elimina las confusiones
+    cruzadas O↔0, I↔1, Z↔2, B↔8, S↔5.
+
+    Robusto a sobre-segmentación: si hay MÁS de 7 cajas (logo ANT, guion o ruido
+    colados), desliza una ventana de 7 y luego de 6 sobre las cajas y elige la
+    de mayor confianza media bajo el patrón EC. Así descarta los extras de los
+    bordes sin depender de una segmentación perfecta.
+    """
+    n = probs.shape[0]
+    if n < 6:
+        return "", 0.0
+
+    # Preferir la ventana MÁS LARGA aceptable (7 antes que 6): una placa EC suele
+    # tener 7 caracteres; permitir ventanas de 6 cuando hay un 7-window válido
+    # truncaba placas buenas (GTC-8918 → "TCB-918"). Solo se cae a 6 si ningún
+    # 7-window alcanza confianza mínima (placas 3+3 reales o segmentación pobre).
+    for largo in (7, 6):
+        if n < largo:
+            continue
+        mejor_txt, mejor_conf = "", 0.0
+        for ini in range(0, n - largo + 1):
+            txt, conf = _decodificar_ventana(probs, ini, largo)
+            if conf > mejor_conf:
+                mejor_txt, mejor_conf = txt, conf
+        if mejor_conf >= CONF_CNN_MIN:
+            return mejor_txt, mejor_conf
+    return mejor_txt, mejor_conf
 
 
 def _decodificar_plano(probs: np.ndarray) -> tuple[str, float]:
@@ -324,6 +481,8 @@ def _validar_formato(texto: str) -> str:
                 return placa
     return ""
 
+validar_formato_placa = _validar_formato
+
 
 # ----------------------------------------------------------------
 #  Lectura completa de una placa
@@ -340,20 +499,15 @@ def leer_placa_cnn(recorte: np.ndarray) -> tuple[str, str, float]:
     chars = _segmentar_caracteres(gris)
     probs = _clasificar_caracteres(chars)
 
-    # 1º intento: decodificación posicional (formato EC ABC-NNNN)
+    # Siempre devolver el texto crudo para que el Votador haga el consenso temporal.
+    # La validación _validar_formato se hará sobre el consenso final reconstruido.
     texto_pos, conf_pos = _decodificar_posicional(probs)
-    placa = _validar_formato(texto_pos)
-    if placa:
-        if conf_pos < CONF_CNN_MIN:
-            placa = ""
-        return placa, texto_pos, conf_pos
+    if conf_pos >= CONF_CNN_MIN:
+        return texto_pos, texto_pos, conf_pos
 
-    # Fallback: argmax plano + búsqueda de formato por ventana deslizante
+    # Fallback: argmax plano
     texto, conf = _decodificar_plano(probs)
-    placa = _validar_formato(texto)
-    if placa and conf < CONF_CNN_MIN:
-        placa = ""
-    return placa, texto, conf
+    return texto, texto, conf
 
 
 # ----------------------------------------------------------------
@@ -368,14 +522,44 @@ def leer_placa_desde_recorte(recorte: np.ndarray, max_variantes=None) -> tuple[s
 def reconocer_placa(frame: np.ndarray, max_variantes: int | None = None
                     ) -> tuple[str, tuple | None, float]:
     """
-    Pipeline principal: frame → YOLO → recorte → segmentación → CNN
-    → (placa, bbox, conf).
+    Pipeline principal: frame → YOLO → recorte → OCR → (texto_crudo, bbox, conf).
+
+    Devuelve el TEXTO CRUDO (sin guion) para que el Votador haga el consenso
+    temporal; el formato ABC-NNNN se valida sobre el consenso (validar_formato_placa).
+
+    Backend OCR (env OCR_BACKEND):
+      'amigo' (default) → U-Net + CNN via ONNX (generaliza mejor a placas variadas),
+                          con nuestra CNN como respaldo de recall.
+      'cnn'             → solo nuestra CNN (componentes conexos).
     """
     recorte, bbox = detectar_region_placa(frame)
     if recorte is None:
         return "", None, 0.0
-    placa, _texto, conf = leer_placa_cnn(recorte)
-    return placa, bbox, conf
+    # Upscale de placas pequeñas (autos lejanos): la segmentación es más estable
+    # con altura >= 48px. INTER_CUBIC interpola mejor los bordes de los caracteres.
+    # Umbral en 48px (antes 72px): evita upscaling innecesario de placas medianas.
+    h = recorte.shape[0]
+    if 0 < h < 48:
+        f = 48.0 / h
+        recorte = cv2.resize(recorte, (max(1, int(recorte.shape[1] * f)), 48),
+                             interpolation=cv2.INTER_CUBIC)
+
+    backend = os.getenv("OCR_BACKEND", "amigo").lower()
+    if backend in ("amigo", "auto"):
+        try:
+            import ocr_amigo
+            if ocr_amigo.disponible():
+                _placa, texto, conf = ocr_amigo.leer_placa_amigo(recorte)
+                if texto:
+                    return texto, bbox, conf      # texto crudo p/ votador
+                # amigo no produjo texto -> respaldo con nuestra CNN (más recall)
+                _p2, texto2, conf2 = leer_placa_cnn(recorte)
+                return texto2, bbox, conf2
+        except Exception as e:
+            print(f"[OCR amigo] error -> fallback CNN: {e}")
+
+    _placa, texto, conf = leer_placa_cnn(recorte)
+    return texto, bbox, conf
 
 
 # ----------------------------------------------------------------

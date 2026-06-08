@@ -39,7 +39,7 @@ def evaluar_modelo():
     print(f"Modelo cargado desde {ruta}")
     print(f"Dispositivo: {device}")
 
-    data_dir = str(ROOT / "data")
+    data_dir = str(ROOT / "data" / "datasets")
     test_ds = ConcatDataset([
         EMNISTMappedDataset(data_dir, train=False, transform=transform_test),
         MNISTOffsetDataset(data_dir,  train=False, transform=transform_test),
