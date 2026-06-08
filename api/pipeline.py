@@ -166,6 +166,7 @@ class RadarPipeline:
             "votador": VotadorPlaca(min_votos=3, conf_min=0.35),
             "registrado": False, "placa": "",
             "last_seen": 0, "t_b_real": 0.0, "medido": False,
+            "best_area": 0, "best_frame": None, "ocr_en_curso": False,
         }
 
     def _process_loop(self, fuente, distancia_m, alto, ancho):
@@ -199,7 +200,7 @@ class RadarPipeline:
                 pass
         veh_yolo = self._veh_yolo
         VEH_CLASSES = [2, 3, 5, 7]   # car, motorcycle, bus, truck (COCO)
-        MIN_H_OCR = 0.06 * alto       # OCR mas temprano (async, no bloquea): mas lecturas
+        MIN_H_OCR = 0.15 * alto       # OCR solo para autos grandes (cerca), evita leer a lo lejos
         MIN_H_TRACK = 0.07 * alto     # ignora autos diminutos (lejanos) -> menos trabajo
 
         tracks = {}
@@ -246,10 +247,10 @@ class RadarPipeline:
             inv = 1.0 / DET_SCALE
 
             vivos = set()
+            ocr_presupuesto = 1
             # Presupuesto de OCR por frame: el OCR cuesta y bloquea el loop. Se hace
             # 1 OCR por frame, asignado al auto MAS GRANDE (cercano = placa legible)
             # procesando las detecciones de mayor a menor area.
-            ocr_presupuesto = 1
             if res.boxes is not None and res.boxes.id is not None:
                 _dets = list(zip(res.boxes.xyxy.cpu().numpy(),
                                  res.boxes.id.cpu().numpy()))
@@ -268,13 +269,15 @@ class RadarPipeline:
                     cx = (x1 + x2) // 2
                     cy = y2
                     bh = y2 - y1
+                    area_box = (x2 - x1) * bh
+
+                    if area_box > tr["best_area"]:
+                        tr["best_area"] = area_box
+                        tr["best_frame"] = frame.copy()
+
+
 
                     # ── Cruce de lineas — SIEMPRE, aun para autos lejanos/chicos ──
-                    # Es barato (solo geometria) y DEBE seguirse desde lejos: los
-                    # autos cruzan la linea A cuando aun estan pequenos (al fondo).
-                    # Si se hiciera tras el gate de tamano, prev_a nunca se setearia
-                    # mientras el auto es chico y se perderia el cruce de A -> el track
-                    # solo cruzaria B -> nunca se mide -> sin evento/correo.
                     # Orden independiente: el auto puede cruzar A->B o B->A.
                     la_s = lado_linea(cx, cy, la["x1"], la["y1"], la["x2"], la["y2"])
                     lb_s = lado_linea(cx, cy, lb["x1"], lb["y1"], lb["x2"], lb["y2"])
@@ -309,9 +312,9 @@ class RadarPipeline:
                     # cruzaron una linea) y no registrados. Asi se SALTAN todos los
                     # autos PARQUEADOS (nunca cruzan) -> mucho menos lag.
                     # Crop del frame ORIGINAL full-res; alterna frames por track.
-                    en_zona = tr["crossed_a"] or tr["crossed_b"]
+                    en_zona = tr["crossed_a"] or tr["crossed_b"] or tr["medido"]
                     if (en_zona and not tr["registrado"] and bh >= MIN_H_OCR
-                            and ocr_presupuesto > 0 and (frame_idx + tid) % 2 == 0):
+                            and ocr_presupuesto > 0):
                         ocr_presupuesto -= 1
                         px = max(2, int((x2 - x1) * 0.15))
                         py = max(2, int((y2 - y1) * 0.15))
@@ -320,8 +323,6 @@ class RadarPipeline:
                         veh_crop = frame[y1_pad:y2_pad, x1_pad:x2_pad]
                         if veh_crop.size:
                             placa_cruda, pbb, conf = reconocer_placa(veh_crop)
-                            # Pondera por TAMANO de placa: frames de cerca (placa
-                            # grande, nitida) pesan mas que los lejanos.
                             ph = pbb[3] if pbb else 0
                             size_w = max(0.3, min(1.6, ph / 40.0))
                             tr["votador"].agregar(placa_cruda, conf * size_w)
@@ -333,7 +334,8 @@ class RadarPipeline:
                         consenso_crudo = tr["votador"].consenso()
                         placa_valida = validar_formato_placa(consenso_crudo)
                         if placa_valida:
-                            self._registrar_track(frame, tr, placa_valida)
+                            frame_para_guardar = tr["best_frame"] if tr["best_frame"] is not None else frame
+                            self._registrar_track(frame_para_guardar, tr, placa_valida)
 
                     # Dibujo: color segun estado del track.
                     if tr["registrado"] and tr.get("placa"):
@@ -357,14 +359,15 @@ class RadarPipeline:
             for d in tracks.values():
                 if d["medido"] and d["speed"] > 0 and not d["registrado"]:
                     perdido = d["last_seen"] != frame_idx
-                    grace = d["t_b_real"] > 0 and time.time() - d["t_b_real"] > 1.2
+                    # Solo dar grace period si cruzó la línea B (está saliendo). Si no, solo registrar cuando se pierda.
+                    grace = d["crossed_b"] and d["t_b_real"] > 0 and time.time() - d["t_b_real"] > 1.2
                     if perdido or grace:
                         consenso_crudo = d["votador"].consenso() or d["votador"].mejor_lectura()[0]
                         placa_valida = validar_formato_placa(consenso_crudo)
                         if placa_valida:
-                            self._registrar_track(frame, d, placa_valida)
+                            frame_para_guardar = d["best_frame"] if d["best_frame"] is not None else frame
+                            self._registrar_track(frame_para_guardar, d, placa_valida)
                         else:
-                            # Marcar como registrado para que se limpie sin generar evento basura
                             d["registrado"] = True
                             d["placa"] = ""
 
@@ -397,6 +400,7 @@ class RadarPipeline:
         """Guarda captura, registra evento y notifica para un track que cruzo B."""
         tr["registrado"] = True
         tr["placa"] = placa_final or "SIN-LECTURA"
+            
         difuso = clasificar_velocidad(tr["speed"])
         clasif = difuso["clasificacion"]
         horas = difuso["horas_indisponibilidad"]
