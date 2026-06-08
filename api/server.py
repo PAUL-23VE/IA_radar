@@ -142,6 +142,7 @@ async def test_ocr(files: List[UploadFile] = File(...)):
 
 class StartRequest(BaseModel):
     fuente: str | int
+    distancia_m: float | None = None
 
 @app.get("/api/config")
 async def get_config():
@@ -150,7 +151,8 @@ async def get_config():
     return {
         "ip_iphone": settings.IP_IPHONE,
         "puerto": settings.PUERTO,
-        "url_stream": URL_STREAM
+        "url_stream": URL_STREAM,
+        "distancia_referencia_metros": settings.DISTANCIA_REFERENCIA_METROS
     }
 
 @app.post("/api/start")
@@ -166,7 +168,8 @@ async def start_pipeline(req: StartRequest):
         else:
             fuente = fuente_strip
         
-    success = pipeline.start(fuente=fuente)
+    distancia = req.distancia_m if req.distancia_m is not None else DISTANCIA_REFERENCIA_METROS
+    success = pipeline.start(fuente=fuente, distancia_m=distancia)
     return {"success": success, "message": "Iniciado" if success else "No se pudo iniciar o ya estaba corriendo"}
 
 @app.post("/api/stop")

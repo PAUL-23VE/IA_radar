@@ -30,12 +30,13 @@ from datetime import datetime
 
 import cv2
 import numpy as np
+from ultralytics import YOLO
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "cnn"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "velocidad"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "utils"))
 
-from inferencia    import reconocer_placa
+from inferencia    import reconocer_placa, validar_formato_placa
 from logica_difusa import clasificar_velocidad
 from registro      import registrar_evento
 from camara        import URL_STREAM
@@ -174,7 +175,7 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
     pantalla_completa = True
 
     estado           = ESTADO_VELOCIDAD
-    fgbg             = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=True)
+    model_vehiculos  = YOLO('yolo11n.pt')
     t_a = t_b        = 0.0
     cruzó_linea_a    = False
     cruzó_linea_b    = False
@@ -220,27 +221,28 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
 
             # ─── MÓDULO VELOCIDAD ──────────────────────────────────
             if estado == ESTADO_VELOCIDAD:
-                mascara      = fgbg.apply(frame)
-                _, mask_bin  = cv2.threshold(mascara, 200, 255, cv2.THRESH_BINARY)
-                kernel       = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-                mask_clean   = cv2.morphologyEx(mask_bin, cv2.MORPH_OPEN, kernel)
-                mask_clean   = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
-                contornos, _ = cv2.findContours(mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                # Tomar el contorno más grande como vehículo principal
+                # 2=car, 3=motorcycle, 5=bus, 7=truck
+                resultados = model_vehiculos.track(frame, persist=True, classes=[2, 3, 5, 7], verbose=False)
+                
                 veh_cx = veh_cy = None
                 mejor_area = 0
-                for cnt in contornos:
-                    area = cv2.contourArea(cnt)
-                    if area > 2000 and area > mejor_area:
-                        bx, by, bw, bh = cv2.boundingRect(cnt)
-                        # Descartar contornos muy planos (suelo, sombras horizontales)
-                        if bh < 25 or bw > bh * 8:
-                            continue
-                        veh_cx = bx + bw // 2
-                        veh_cy = by + bh // 2   # centro del contorno (no borde inferior)
-                        mejor_area = area
-                        cv2.rectangle(frame_display, (bx, by), (bx + bw, by + bh), (0, 255, 255), 2)
+                
+                if resultados[0].boxes and resultados[0].boxes.id is not None:
+                    cajas = resultados[0].boxes.xyxy.cpu().numpy()
+                    ids = resultados[0].boxes.id.cpu().numpy()
+                    
+                    for caja, track_id in zip(cajas, ids):
+                        x1, y1, x2, y2 = caja
+                        bw = x2 - x1
+                        bh = y2 - y1
+                        area = bw * bh
+                        if area > mejor_area:
+                            mejor_area = area
+                            veh_cx = int(x1 + bw / 2)
+                            veh_cy = int(y1 + bh / 2)
+                            bx, by = int(x1), int(y1)
+                            cv2.rectangle(frame_display, (bx, by), (int(x2), int(y2)), (0, 255, 255), 2)
+                            cv2.putText(frame_display, f"ID: {int(track_id)}", (bx, by - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
                 cv2.putText(frame_display, "MIDIENDO VELOCIDAD…", (20, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
@@ -278,15 +280,8 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                 cv2.putText(frame_display, "BUSCANDO PLACA…",
                             (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
 
-                # Solo enviar al worker si hay movimiento real en el frame.
-                # Evita leer placas de vehículos estáticos o frames vacíos.
-                mascara_mov   = fgbg.apply(frame)
-                _, mov_bin    = cv2.threshold(mascara_mov, 200, 255, cv2.THRESH_BINARY)
-                pixeles_mov   = cv2.countNonZero(mov_bin)
-                hay_movimiento = pixeles_mov > 800   # umbral: ~0.1% de un frame 1080p
-
-                if hay_movimiento:
-                    worker.submit(frame)
+                # Enviar los frames al worker directamente (YOLO tracking asume que el auto existe)
+                worker.submit(frame)
 
                 # Acumular todas las lecturas nuevas para votación temporal
                 for p, bb, c in worker.drenar_lecturas():
@@ -299,9 +294,10 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                             (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 0), 2)
 
                 # Consenso multi-frame → placa definitiva
-                placa_consenso = votador.consenso()
-                if placa_consenso:
-                    placa_detectada = placa_consenso
+                placa_consenso_cruda = votador.consenso()
+                placa_valida = validar_formato_placa(placa_consenso_cruda)
+                if placa_valida:
+                    placa_detectada = placa_valida
                     estado = ESTADO_REGISTRO
                     captura_guardada = False
                     print(f"[Placa] Consenso ({votador.n} lecturas): {placa_detectada}")
@@ -311,14 +307,15 @@ def procesar_vehiculo(cam_url=URL_STREAM, distancia_m: float = DISTANCIA_REFEREN
                 t_ahora = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if es_archivo else time.time()
                 if t_b > 0 and t_ahora - t_b > 5.0:
                     # Timeout: si hubo alguna lectura, usar la mejor disponible
-                    fallback = votador.consenso() or (votador._lecturas[-1] if votador.n else "")
-                    if fallback:
-                        placa_detectada = fallback
+                    fallback_cruda = votador.consenso() or (votador._lecturas[-1] if votador.n else "")
+                    placa_valida = validar_formato_placa(fallback_cruda)
+                    if placa_valida:
+                        placa_detectada = placa_valida
                         estado = ESTADO_REGISTRO
                         captura_guardada = False
                         print(f"[Placa] Timeout → mejor lectura: {placa_detectada}")
                     else:
-                        print("[Sistema] Timeout sin placa. Reiniciando…")
+                        print(f"[Sistema] Timeout sin placa válida (crudo: {fallback_cruda}). Reiniciando…")
                         estado = ESTADO_VELOCIDAD
                         cruzó_linea_a = cruzó_linea_b = False
                         t_a = t_b = 0.0

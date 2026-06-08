@@ -178,8 +178,12 @@ class RadarPipeline:
         Maneja varios autos a la vez; los parqueados nunca cruzan -> no disparan.
         """
         from ultralytics import YOLO
-        from inferencia import reconocer_placa
+        from inferencia import reconocer_placa, validar_formato_placa
 
+        # OCR SINCRONO y limitado (1/frame al auto mas cercano): en una sola GPU el
+        # OCR asincrono multi-hilo (best.pt) compite con el tracker YOLO por la GPU
+        # -> picos de latencia no deterministas (a veces 0 placas). Sincrono = lento
+        # pero CONFIABLE, que es lo que importa para presentar.
         es_archivo = isinstance(fuente, str) and not fuente.startswith("http")
         fps_video = self.cap.get(cv2.CAP_PROP_FPS) or 30
         delay_ms = max(1, int(1000 / fps_video)) if es_archivo else 1
@@ -195,7 +199,7 @@ class RadarPipeline:
                 pass
         veh_yolo = self._veh_yolo
         VEH_CLASSES = [2, 3, 5, 7]   # car, motorcycle, bus, truck (COCO)
-        MIN_H_OCR = 0.10 * alto       # solo OCR de vehiculos suficientemente cercanos
+        MIN_H_OCR = 0.06 * alto       # OCR mas temprano (async, no bloquea): mas lecturas
         MIN_H_TRACK = 0.07 * alto     # ignora autos diminutos (lejanos) -> menos trabajo
 
         tracks = {}
@@ -242,9 +246,16 @@ class RadarPipeline:
             inv = 1.0 / DET_SCALE
 
             vivos = set()
+            # Presupuesto de OCR por frame: el OCR cuesta y bloquea el loop. Se hace
+            # 1 OCR por frame, asignado al auto MAS GRANDE (cercano = placa legible)
+            # procesando las detecciones de mayor a menor area.
+            ocr_presupuesto = 1
             if res.boxes is not None and res.boxes.id is not None:
-                for box, tid in zip(res.boxes.xyxy.cpu().numpy(),
-                                    res.boxes.id.cpu().numpy()):
+                _dets = list(zip(res.boxes.xyxy.cpu().numpy(),
+                                 res.boxes.id.cpu().numpy()))
+                _dets.sort(key=lambda d: (d[0][2] - d[0][0]) * (d[0][3] - d[0][1]),
+                           reverse=True)
+                for box, tid in _dets:
                     # Escalar caja de vuelta a coordenadas del frame original.
                     x1, y1, x2, y2 = (int(box[0]*inv), int(box[1]*inv),
                                       int(box[2]*inv), int(box[3]*inv))
@@ -300,24 +311,32 @@ class RadarPipeline:
                     # Crop del frame ORIGINAL full-res; alterna frames por track.
                     en_zona = tr["crossed_a"] or tr["crossed_b"]
                     if (en_zona and not tr["registrado"] and bh >= MIN_H_OCR
-                            and (frame_idx + tid) % 2 == 0):
-                        veh_crop = frame[max(0, y1):y2, max(0, x1):x2]
+                            and ocr_presupuesto > 0 and (frame_idx + tid) % 2 == 0):
+                        ocr_presupuesto -= 1
+                        px = max(2, int((x2 - x1) * 0.15))
+                        py = max(2, int((y2 - y1) * 0.15))
+                        y1_pad = max(0, int(y1 - py)); y2_pad = min(alto, int(y2 + py))
+                        x1_pad = max(0, int(x1 - px)); x2_pad = min(ancho, int(x2 + px))
+                        veh_crop = frame[y1_pad:y2_pad, x1_pad:x2_pad]
                         if veh_crop.size:
-                            placa, pbb, conf = reconocer_placa(veh_crop)
-                            # Pondera por TAMAÑO de placa: frames de cerca (placa
-                            # grande, nitida) pesan mas que los lejanos (chica, borrosa).
+                            placa_cruda, pbb, conf = reconocer_placa(veh_crop)
+                            # Pondera por TAMANO de placa: frames de cerca (placa
+                            # grande, nitida) pesan mas que los lejanos.
                             ph = pbb[3] if pbb else 0
                             size_w = max(0.3, min(1.6, ph / 40.0))
-                            tr["votador"].agregar(placa, conf * size_w)
+                            tr["votador"].agregar(placa_cruda, conf * size_w)
 
                     # Registro rapido: cruzo ambas, hay consenso rico (>=4 votos de
                     # cerca) -> registra mientras el auto sigue visible.
                     if (tr["medido"] and tr["speed"] > 0 and not tr["registrado"]
-                            and tr["votador"].consenso() and tr["votador"].n >= 4):
-                        self._registrar_track(frame, tr, tr["votador"].consenso())
+                            and tr["votador"].n >= 4):
+                        consenso_crudo = tr["votador"].consenso()
+                        placa_valida = validar_formato_placa(consenso_crudo)
+                        if placa_valida:
+                            self._registrar_track(frame, tr, placa_valida)
 
                     # Dibujo: color segun estado del track.
-                    if tr["registrado"]:
+                    if tr["registrado"] and tr.get("placa"):
                         color = (0, 200, 0)
                         etiqueta = f"{tr['placa']} {tr['speed']:.0f}km/h"
                     elif tr["crossed_a"] or tr["crossed_b"]:
@@ -340,9 +359,14 @@ class RadarPipeline:
                     perdido = d["last_seen"] != frame_idx
                     grace = d["t_b_real"] > 0 and time.time() - d["t_b_real"] > 1.2
                     if perdido or grace:
-                        placa_final = d["votador"].consenso() or d["votador"].mejor_lectura()[0]
-                        if placa_final:
-                            self._registrar_track(frame, d, placa_final)
+                        consenso_crudo = d["votador"].consenso() or d["votador"].mejor_lectura()[0]
+                        placa_valida = validar_formato_placa(consenso_crudo)
+                        if placa_valida:
+                            self._registrar_track(frame, d, placa_valida)
+                        else:
+                            # Marcar como registrado para que se limpie sin generar evento basura
+                            d["registrado"] = True
+                            d["placa"] = ""
 
             # Limpieza de tracks perdidos (no vistos en 30 frames).
             for tid in [t for t, d in tracks.items()
@@ -365,6 +389,9 @@ class RadarPipeline:
                     for _ in range(max(0, n_skip)):
                         if not self.cap.grab():
                             break
+
+        if self.cap:
+            self.cap.release()
 
     def _registrar_track(self, frame, tr, placa_final):
         """Guarda captura, registra evento y notifica para un track que cruzo B."""

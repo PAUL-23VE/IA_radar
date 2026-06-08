@@ -481,6 +481,8 @@ def _validar_formato(texto: str) -> str:
                 return placa
     return ""
 
+validar_formato_placa = _validar_formato
+
 
 # ----------------------------------------------------------------
 #  Lectura completa de una placa
@@ -497,16 +499,15 @@ def leer_placa_cnn(recorte: np.ndarray) -> tuple[str, str, float]:
     chars = _segmentar_caracteres(gris)
     probs = _clasificar_caracteres(chars)
 
-    # 1º intento: decodificación posicional (formato EC ABC-NNNN)
+    # Siempre devolver el texto crudo para que el Votador haga el consenso temporal.
+    # La validación _validar_formato se hará sobre el consenso final reconstruido.
     texto_pos, conf_pos = _decodificar_posicional(probs)
-    placa = _validar_formato(texto_pos)
-    if placa:
-        return placa, texto_pos, conf_pos
+    if conf_pos >= CONF_CNN_MIN:
+        return texto_pos, texto_pos, conf_pos
 
-    # Fallback: argmax plano + búsqueda de formato por ventana deslizante
+    # Fallback: argmax plano
     texto, conf = _decodificar_plano(probs)
-    placa = _validar_formato(texto)
-    return placa, texto, conf
+    return texto, texto, conf
 
 
 # ----------------------------------------------------------------
@@ -521,21 +522,43 @@ def leer_placa_desde_recorte(recorte: np.ndarray, max_variantes=None) -> tuple[s
 def reconocer_placa(frame: np.ndarray, max_variantes: int | None = None
                     ) -> tuple[str, tuple | None, float]:
     """
-    Pipeline principal: frame → YOLO → recorte → segmentación → CNN
-    → (placa, bbox, conf).
+    Pipeline principal: frame → YOLO → recorte → OCR → (texto_crudo, bbox, conf).
+
+    Devuelve el TEXTO CRUDO (sin guion) para que el Votador haga el consenso
+    temporal; el formato ABC-NNNN se valida sobre el consenso (validar_formato_placa).
+
+    Backend OCR (env OCR_BACKEND):
+      'amigo' (default) → U-Net + CNN via ONNX (generaliza mejor a placas variadas),
+                          con nuestra CNN como respaldo de recall.
+      'cnn'             → solo nuestra CNN (componentes conexos).
     """
     recorte, bbox = detectar_region_placa(frame)
     if recorte is None:
         return "", None, 0.0
-    # Upscale de placas pequeñas (autos lejanos): la segmentación es más estable
-    # con altura >= 48px. INTER_CUBIC interpola mejor los bordes de los caracteres.
+    # Upscale de placas pequeñas (autos lejanos): el OCR es más estable con altura
+    # alta. INTER_CUBIC interpola mejor los bordes de los caracteres.
     h = recorte.shape[0]
-    if 0 < h < 48:
-        f = 48.0 / h
-        recorte = cv2.resize(recorte, (max(1, int(recorte.shape[1] * f)), 48),
+    if 0 < h < 72:
+        f = 72.0 / h
+        recorte = cv2.resize(recorte, (max(1, int(recorte.shape[1] * f)), 72),
                              interpolation=cv2.INTER_CUBIC)
-    placa, _texto, conf = leer_placa_cnn(recorte)
-    return placa, bbox, conf
+
+    backend = os.getenv("OCR_BACKEND", "amigo").lower()
+    if backend in ("amigo", "auto"):
+        try:
+            import ocr_amigo
+            if ocr_amigo.disponible():
+                _placa, texto, conf = ocr_amigo.leer_placa_amigo(recorte)
+                if texto:
+                    return texto, bbox, conf      # texto crudo p/ votador
+                # amigo no produjo texto -> respaldo con nuestra CNN (más recall)
+                _p2, texto2, conf2 = leer_placa_cnn(recorte)
+                return texto2, bbox, conf2
+        except Exception as e:
+            print(f"[OCR amigo] error -> fallback CNN: {e}")
+
+    _placa, texto, conf = leer_placa_cnn(recorte)
+    return texto, bbox, conf
 
 
 # ----------------------------------------------------------------

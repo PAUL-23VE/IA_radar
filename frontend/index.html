@@ -25,11 +25,23 @@
                 <div class="input-group">
                     <label for="source-type">Tipo de Entrada</label>
                     <select id="source-type">
-                        <option value="camera">Cámara Web (0)</option>
+                        <option value="camera">Cámara Web</option>
                         <option value="video">Archivo de Video</option>
                         <option value="image">Imagen(es) Estática(s)</option>
                         <option value="stream">Stream Digital (URL)</option>
                     </select>
+                </div>
+                
+                <div class="input-group" id="source-camera-group" style="display: flex;">
+                    <label for="source-camera-index">Índice de Cámara</label>
+                    <input type="number" id="source-camera-index" min="0" value="0" step="1">
+                    <small style="color: rgba(255,255,255,0.5); font-size: 11px; margin-top: 4px; display: block;">Ingresa el índice de la webcam USB o la cámara integrada (0, 1, 2...).</small>
+                </div>
+
+                <div class="input-group" id="velocity-distance-group" style="display: flex;">
+                    <label for="velocity-distance">Distancia entre líneas (m)</label>
+                    <input type="number" id="velocity-distance" min="0.1" value="5.0" step="0.1">
+                    <small style="color: rgba(255,255,255,0.5); font-size: 11px; margin-top: 4px; display: block;">Distancia real entre las dos líneas de medición usadas para calcular velocidad.</small>
                 </div>
                 
                 <div class="input-group" id="source-path-group" style="display: none;">
