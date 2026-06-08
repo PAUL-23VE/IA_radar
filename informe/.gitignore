@@ -1,0 +1,13 @@
+# Artefactos de LaTeX generados en esta carpeta
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.synctex.gz
+*.out
+*.toc
+*.pdf
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
