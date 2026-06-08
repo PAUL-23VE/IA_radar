@@ -27,10 +27,10 @@ import onnxruntime as ort
 _DIR = os.path.dirname(os.path.abspath(__file__))
 _RUTA_SEG = os.path.join(_DIR, "..", "models", "amigo_seg_unet.onnx")
 _RUTA_CNN = os.path.join(_DIR, "..", "models", "amigo_ocr_cnn.onnx")
-_RUTA_CLASSES = os.path.join(
-    _DIR, "..", "Plate_Detection_Segmentation_OCR_sin_dependencias",
-    "ml", "models", "ocr", "Modelos", "classes.txt")
 
+# Orden de clases del clasificador CNN (idéntico al classes.txt original del
+# modelo: dígitos 0-9 seguidos de letras A-Z). Autónomo: no depende de archivos
+# externos ni de los repos de referencia.
 CLASSES = list("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 CHAR_ASPECT = 0.60
 
@@ -48,7 +48,7 @@ _cnn = None
 #  Carga de sesiones ONNX (singleton thread-safe)
 # ----------------------------------------------------------------
 def _cargar():
-    global _seg, _cnn, CLASSES
+    global _seg, _cnn
     if _seg is None or _cnn is None:
         with _lock:
             so = ort.SessionOptions()
@@ -61,9 +61,6 @@ def _cargar():
                 _cnn = ort.InferenceSession(os.path.abspath(_RUTA_CNN),
                                             sess_options=so,
                                             providers=["CPUExecutionProvider"])
-            if os.path.exists(_RUTA_CLASSES):
-                with open(_RUTA_CLASSES, encoding="utf-8") as f:
-                    CLASSES = [ln.strip() for ln in f if ln.strip()]
     return _seg, _cnn
 
 

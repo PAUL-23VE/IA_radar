@@ -162,20 +162,57 @@ CNN, YOLO, ByteTrack, lógica difusa, Mamdani, Takagi--Sugeno, ONNX, radar vehic
 \end{itemize}
 
 \subsubsection*{Dependencias de Python utilizadas}
-\begin{itemize}
-    \item \textbf{Ultralytics (\texttt{ultralytics}):} detección y seguimiento YOLO11
-    de vehículos y placas.
-    \item \textbf{ONNX Runtime (\texttt{onnxruntime}):} inferencia de la U-Net de
-    segmentación y la CNN de clasificación de caracteres.
-    \item \textbf{OpenCV (\texttt{opencv-python}):} captura de video, preprocesamiento,
-    enderezado y operaciones geométricas.
-    \item \textbf{NumPy (\texttt{numpy}):} representación matricial y operaciones
-    vectoriales.
-    \item \textbf{scikit-fuzzy (\texttt{scikit-fuzzy}):} funciones de pertenencia del
-    sistema difuso.
-    \item \textbf{FastAPI / Uvicorn:} backend web y transmisión del video procesado.
-    \item \textbf{Matplotlib:} renderizado del razonamiento difuso.
-\end{itemize}
+La Tabla~\ref{tab:dependencias} detalla cada dependencia, su función y el uso
+concreto que se le dio dentro del sistema. Todas son de código abierto.
+
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \caption{Dependencias del sistema: función y uso concreto.}
+    \label{tab:dependencias}
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabular}{>{\raggedright\arraybackslash}p{2.6cm} >{\raggedright\arraybackslash}p{4.2cm} >{\raggedright\arraybackslash}p{7.0cm}}
+        \toprule
+        \textbf{Dependencia} & \textbf{Qué hace} & \textbf{Cómo se usó en el sistema} \\
+        \midrule
+        \texttt{ultralytics} & Implementación de modelos YOLO y del seguimiento
+        multi-objeto (ByteTrack). & Carga \texttt{yolo11n} (COCO) para detectar y
+        \emph{rastrear} todos los vehículos del cuadro, y el modelo de placa
+        (\emph{License\_Plate}) para localizar la región de la placa en cada vehículo. \\
+
+        \texttt{onnxruntime} & Motor de inferencia de modelos en formato ONNX,
+        independiente del framework de entrenamiento. & Ejecuta en CPU la U-Net de
+        segmentación de caracteres y la CNN de clasificación, convertidas desde Keras.
+        Permite usar el OCR en Python~3.14 sin TensorFlow. \\
+
+        \texttt{torch} & Backend de cómputo en GPU de los modelos YOLO. & Acelera en
+        CUDA la detección y el seguimiento de vehículos/placas; la GPU queda dedicada
+        a YOLO mientras el OCR corre en CPU vía ONNX. \\
+
+        \texttt{opencv-python} & Procesamiento de imagen y video clásico. & Captura de
+        cámara/archivo, recorte y escalado de placas, enderezado por Hough,
+        binarización y componentes conexos en el postproceso, y dibujo del HUD
+        (líneas, cajas, etiquetas) sobre el video. \\
+
+        \texttt{numpy} & Cálculo numérico vectorial sobre matrices. & Representa
+        imágenes y máscaras, arma los \emph{batches} de entrada a los modelos ONNX y
+        realiza la votación y los cálculos del sistema difuso. \\
+
+        \texttt{scikit-fuzzy} & Funciones de pertenencia difusa (triangular,
+        trapezoidal) e interpolación. & Define las pertenencias de velocidad y los
+        sub-niveles de severidad, base de la clasificación Mamdani y de la sanción
+        Takagi--Sugeno. \\
+
+        \texttt{fastapi} / \texttt{uvicorn} & Framework y servidor web asíncrono. &
+        Exponen la API REST (iniciar/detener, configurar fuente y distancia),
+        transmiten el video procesado (MJPEG) y emiten los eventos al frontend. \\
+
+        \texttt{matplotlib} & Generación de figuras. & Renderiza el razonamiento difuso
+        (pertenencias de velocidad y curva de sanción) que se muestra en el modal del
+        evento y se adjunta en el correo. \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 
 \textbf{TAC (Tecnologías para el Aprendizaje y Conocimiento):}
 
@@ -619,6 +656,50 @@ micro-descensos del centroide de Mamdani. Finalmente, el despliegue con ONNX dem
 que es posible reutilizar modelos entrenados en Keras dentro de un entorno moderno sin
 TensorFlow, manteniendo el rendimiento y separando el uso de GPU (seguimiento) del de
 CPU (reconocimiento).
+
+\subsection{Alcance, generalización y limitaciones}
+Una pregunta central es si el sistema funciona únicamente sobre los datos con los que
+se entrenó (placas, caracteres y videos específicos) o si \emph{generaliza} a casos
+nuevos. La evidencia y el diseño indican que el sistema generaliza, con condiciones:
+
+\begin{itemize}
+    \item \textbf{Detección y seguimiento de vehículos.} El modelo \texttt{yolo11n}
+    está preentrenado sobre COCO (un conjunto general de 80 categorías que incluye
+    automóvil, motocicleta, bus y camión). No se entrenó con nuestros videos, por lo
+    que detecta y rastrea vehículos en cualquier escena o cámara.
+    \item \textbf{Detección de placa.} El detector se entrenó con un conjunto
+    internacional de $\sim$101\,866 imágenes de placas \cite{ds_placas}, no con nuestro
+    video. En pruebas a distintas escalas localizó la placa de forma consistente, lo
+    que confirma que aprende la apariencia general de una placa y no casos memorizados.
+    \item \textbf{Reconocimiento de caracteres.} La U-Net y la CNN se entrenaron con
+    placas de Reino Unido, Brasil e India y recortes ecuatorianos
+    \cite{ds_uk,ds_brasil,ds_seg,ds_ec}. El hecho de que lean placas ecuatorianas de
+    campus ---ausentes del entrenamiento--- demuestra generalización; la votación
+    temporal entre fotogramas corrige los errores puntuales de un solo cuadro.
+\end{itemize}
+
+En consecuencia, el sistema \emph{no} está limitado al video usado en las pruebas:
+opera sobre cualquier cámara, vehículo y placa. No obstante, su alcance y desempeño
+están acotados por:
+
+\begin{itemize}
+    \item \textbf{Formato ecuatoriano.} La validación final acepta solo la estructura
+    de tres letras y tres o cuatro dígitos; placas de otros países se descartan de
+    forma intencional, pues el sistema está dirigido al contexto nacional.
+    \item \textbf{Condiciones de captura.} La lectura es confiable cuando la placa se
+    observa con suficientes píxeles (vehículo cercano), de forma razonablemente frontal
+    y sin desenfoque extremo, suciedad u oclusión; placas muy lejanas o muy borrosas
+    reducen la exactitud, según el límite de muestreo espacial ya descrito.
+    \item \textbf{Calibración de la velocidad.} La exactitud de la velocidad depende de
+    una distancia entre líneas correctamente medida, su posición acorde a la escena y un
+    fps efectivo suficiente.
+    \item \textbf{Confusiones residuales.} Persisten confusiones entre caracteres
+    visualmente similares (O/0, I/1), mitigadas ---no eliminadas--- por la votación.
+\end{itemize}
+
+En síntesis, para un despliegue nuevo basta con apuntar la cámara, calibrar las dos
+líneas a la distancia real y asegurar que las placas se vean legibles; no se requiere
+reentrenar ningún modelo.
 
 \subsection{Habilidades blandas empleadas}
 $\blacksquare$ Trabajo en equipo \quad $\blacksquare$ Responsabilidad \quad
