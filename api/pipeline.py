@@ -180,10 +180,9 @@ class RadarPipeline:
         from ultralytics import YOLO
         from inferencia import reconocer_placa, validar_formato_placa
 
-        # OCR SINCRONO y limitado (1/frame al auto mas cercano): en una sola GPU el
-        # OCR asincrono multi-hilo (best.pt) compite con el tracker YOLO por la GPU
-        # -> picos de latencia no deterministas (a veces 0 placas). Sincrono = lento
-        # pero CONFIABLE, que es lo que importa para presentar.
+        # OCR SÍNCRONO: 1 OCR por frame asignado al auto MÁS GRANDE (cercano = placa
+        # legible). En una sola GPU el OCR asíncrono multi-hilo compite con el tracker
+        # YOLO por la GPU → picos de latencia no deterministas. Síncrono = predecible.
         es_archivo = isinstance(fuente, str) and not fuente.startswith("http")
         fps_video = self.cap.get(cv2.CAP_PROP_FPS) or 30
         delay_ms = max(1, int(1000 / fps_video)) if es_archivo else 1
@@ -199,7 +198,8 @@ class RadarPipeline:
                 pass
         veh_yolo = self._veh_yolo
         VEH_CLASSES = [2, 3, 5, 7]   # car, motorcycle, bus, truck (COCO)
-        MIN_H_OCR = 0.06 * alto       # OCR mas temprano (async, no bloquea): mas lecturas
+        MIN_H_OCR = 0.06 * alto       # umbral bajo: el sort por área garantiza que
+        #                               # el budget se usa en el auto más cercano
         MIN_H_TRACK = 0.07 * alto     # ignora autos diminutos (lejanos) -> menos trabajo
 
         tracks = {}
@@ -246,9 +246,9 @@ class RadarPipeline:
             inv = 1.0 / DET_SCALE
 
             vivos = set()
-            # Presupuesto de OCR por frame: el OCR cuesta y bloquea el loop. Se hace
-            # 1 OCR por frame, asignado al auto MAS GRANDE (cercano = placa legible)
-            # procesando las detecciones de mayor a menor area.
+            # Presupuesto de OCR: 1 llamada por frame, al auto MÁS GRANDE.
+            # El sort por área garantiza que el vehículo más cercano (placa más
+            # legible) recibe el presupuesto. Síncrono = sin competencia GPU.
             ocr_presupuesto = 1
             if res.boxes is not None and res.boxes.id is not None:
                 _dets = list(zip(res.boxes.xyxy.cpu().numpy(),
@@ -320,8 +320,8 @@ class RadarPipeline:
                         veh_crop = frame[y1_pad:y2_pad, x1_pad:x2_pad]
                         if veh_crop.size:
                             placa_cruda, pbb, conf = reconocer_placa(veh_crop)
-                            # Pondera por TAMANO de placa: frames de cerca (placa
-                            # grande, nitida) pesan mas que los lejanos.
+                            # Pondera por TAMAÑO de placa: frames de cerca (placa
+                            # grande, nítida) pesan más que los lejanos.
                             ph = pbb[3] if pbb else 0
                             size_w = max(0.3, min(1.6, ph / 40.0))
                             tr["votador"].agregar(placa_cruda, conf * size_w)
