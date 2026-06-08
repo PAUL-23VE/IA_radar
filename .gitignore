@@ -39,3 +39,17 @@ docs/*.out
 docs/*.fls
 docs/*.fdb_latexmk
 docs/*.toc
+
+# Repos de referencia de compañeros (no versionar)
+deteccion-placas-bgn/
+Plate_Detection_Segmentation_OCR_sin_dependencias/
+Informe.pdf
+
+# Artefactos de compilacion LaTeX
+informe/*.aux
+informe/*.log
+informe/*.fls
+informe/*.fdb_latexmk
+informe/*.out
+informe/*.synctex.gz
+informe/*.toc
