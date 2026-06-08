@@ -3,6 +3,10 @@ const WS_URL = (window.location.protocol === "https:" ? "wss://" : "ws://") + wi
 
 // Elements
 const sourceTypeSel = document.getElementById('source-type');
+const sourceCameraGroup = document.getElementById('source-camera-group');
+const sourceCameraIndexInput = document.getElementById('source-camera-index');
+const velocityDistanceGroup = document.getElementById('velocity-distance-group');
+const velocityDistanceInput = document.getElementById('velocity-distance');
 const sourcePathGroup = document.getElementById('source-path-group');
 const sourcePathInput = document.getElementById('source-path');
 const sourceFileGroup = document.getElementById('source-file-group');
@@ -48,12 +52,13 @@ const POINT_RADIUS = 12;
 
 // Update UI based on source type
 sourceTypeSel.addEventListener('change', (e) => {
+    sourceCameraGroup.style.display = 'none';
     sourcePathGroup.style.display = 'none';
     sourceFileGroup.style.display = 'none';
     sourceImageGroup.style.display = 'none';
     
     if (e.target.value === 'camera') {
-        // Nada
+        sourceCameraGroup.style.display = 'flex';
     } else if (e.target.value === 'video') {
         sourceFileGroup.style.display = 'flex';
     } else if (e.target.value === 'image') {
@@ -198,7 +203,13 @@ btnStart.addEventListener('click', async () => {
     document.getElementById('btn-seek-fwd').style.display = 'block';
     document.getElementById('playback-speed-group').style.display = 'block';
     
-    if (sourceTypeSel.value === 'video') {
+    if (sourceTypeSel.value === 'camera') {
+        fuente = parseInt(sourceCameraIndexInput.value, 10);
+        if (isNaN(fuente) || fuente < 0) {
+            showToast("Ingresa un índice de cámara válido (0, 1, 2...).");
+            return;
+        }
+    } else if (sourceTypeSel.value === 'video') {
         const file = sourceFileInput.files[0];
         if (!file) {
             showToast("Por favor selecciona un archivo de video.");
@@ -237,11 +248,17 @@ btnStart.addEventListener('click', async () => {
         }
     }
 
+    const distancia = parseFloat(velocityDistanceInput.value);
+    if (isNaN(distancia) || distancia <= 0) {
+        showToast("Ingresa una distancia válida mayor que 0.");
+        return;
+    }
+
     try {
         const res = await fetch(`${API_URL}/api/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fuente })
+            body: JSON.stringify({ fuente, distancia_m: distancia })
         });
         const data = await res.json();
         
@@ -379,6 +396,9 @@ async function loadConfig() {
             window.defaultUrlStream = config.url_stream;
             sourcePathInput.value = config.url_stream;
             sourcePathInput.placeholder = config.url_stream;
+        }
+        if (config && typeof config.distancia_referencia_metros === 'number') {
+            velocityDistanceInput.value = config.distancia_referencia_metros.toFixed(1);
         }
     } catch (e) {
         console.error("No se pudo obtener la configuración por defecto:", e);

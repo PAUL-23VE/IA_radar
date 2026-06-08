@@ -481,6 +481,8 @@ def _validar_formato(texto: str) -> str:
                 return placa
     return ""
 
+validar_formato_placa = _validar_formato
+
 
 # ----------------------------------------------------------------
 #  Lectura completa de una placa
@@ -497,16 +499,15 @@ def leer_placa_cnn(recorte: np.ndarray) -> tuple[str, str, float]:
     chars = _segmentar_caracteres(gris)
     probs = _clasificar_caracteres(chars)
 
-    # 1º intento: decodificación posicional (formato EC ABC-NNNN)
+    # Siempre devolver el texto crudo para que el Votador haga el consenso temporal.
+    # La validación _validar_formato se hará sobre el consenso final reconstruido.
     texto_pos, conf_pos = _decodificar_posicional(probs)
-    placa = _validar_formato(texto_pos)
-    if placa:
-        return placa, texto_pos, conf_pos
+    if conf_pos >= CONF_CNN_MIN:
+        return texto_pos, texto_pos, conf_pos
 
-    # Fallback: argmax plano + búsqueda de formato por ventana deslizante
+    # Fallback: argmax plano
     texto, conf = _decodificar_plano(probs)
-    placa = _validar_formato(texto)
-    return placa, texto, conf
+    return texto, texto, conf
 
 
 # ----------------------------------------------------------------
