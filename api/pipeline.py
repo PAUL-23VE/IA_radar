@@ -181,10 +181,9 @@ class RadarPipeline:
         from ultralytics import YOLO
         from inferencia import reconocer_placa, validar_formato_placa
 
-        # OCR SINCRONO y limitado (1/frame al auto mas cercano): en una sola GPU el
-        # OCR asincrono multi-hilo (best.pt) compite con el tracker YOLO por la GPU
-        # -> picos de latencia no deterministas (a veces 0 placas). Sincrono = lento
-        # pero CONFIABLE, que es lo que importa para presentar.
+        # OCR SÍNCRONO: 1 OCR por frame asignado al auto MÁS GRANDE (cercano = placa
+        # legible). En una sola GPU el OCR asíncrono multi-hilo compite con el tracker
+        # YOLO por la GPU → picos de latencia no deterministas. Síncrono = predecible.
         es_archivo = isinstance(fuente, str) and not fuente.startswith("http")
         fps_video = self.cap.get(cv2.CAP_PROP_FPS) or 30
         delay_ms = max(1, int(1000 / fps_video)) if es_archivo else 1
