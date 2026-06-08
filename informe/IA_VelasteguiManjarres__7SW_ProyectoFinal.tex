@@ -216,8 +216,12 @@ concreto que se le dio dentro del sistema. Todas son de código abierto.
 
 \textbf{TAC (Tecnologías para el Aprendizaje y Conocimiento):}
 
-$\square$ Plataformas educativas \quad $\blacksquare$ Aplicaciones educativas \quad
-$\blacksquare$ Inteligencia Artificial \quad $\square$ Recursos audiovisuales
+\begin{itemize}
+    \item[] $\square$ Plataformas educativas
+    \item[] $\blacksquare$ Aplicaciones educativas
+    \item[] $\blacksquare$ Inteligencia Artificial
+    \item[] $\square$ Recursos audiovisuales
+\end{itemize}
 
 \subsection{Planteamiento del problema}
 La identificación automática de vehículos por su placa es una aplicación frecuente de
@@ -379,24 +383,37 @@ diseño tiene dos etapas (Figura~\ref{fig:fuzzy}):
     \emph{multa} es una rampa monótona desde el límite de 20~km/h, lo que evita el
     perfil en ``serrucho'' que produciría el máximo de varios triángulos solapados.
     \item \textbf{Sanción (Takagi--Sugeno).} Sólo cuando la categoría es \emph{multa},
-    las horas de indisponibilidad se obtienen con una inferencia Sugeno de orden cero
-    \cite{sugeno}: cinco sub-niveles de severidad (leve\dots extrema) que teselan el
-    rango 20--40~km/h, cada uno con un consecuente \emph{singleton} creciente. La
-    salida es el promedio ponderado
+    se calcula la sanción mediante un sistema de inferencia Takagi--Sugeno de orden
+    cero \cite{sugeno}. En lugar de una única membresía de entrada, se definen cinco
+    sub-niveles de severidad ---leve, moderada, alta, grave y extrema--- que cubren el
+    rango de velocidades 20--40~km/h con solapamiento al 50\,\%. Cada sub-nivel cuenta
+    con un consecuente \emph{singleton} (valor crisp) que representa las horas de
+    indisponibilidad: 5, 18, 34, 52 y 70 horas respectivamente. La salida se obtiene
+    como promedio ponderado de estos singletons según la activación de cada sub-nivel:
     \begin{equation}
-        H(v) = \frac{\sum_i \mu_i(v)\, c_i}{\sum_i \mu_i(v)},
+        H(v) = \frac{\sum_{i=1}^{5} \mu_i(v)\, c_i}{\sum_{i=1}^{5} \mu_i(v)},
         \label{eq:sugeno}
     \end{equation}
-    donde $\mu_i(v)$ es la pertenencia al sub-nivel $i$ y $c_i$ su singleton en horas.
+    donde $\mu_i(v)$ es el grado de pertenencia de la velocidad $v$ al sub-nivel $i$,
+    y $c_i$ es su consecuente singleton en horas. Esta formulación garantiza una salida
+    \emph{suave, monótona y proporcional}: un aumento en la velocidad produce siempre
+    un aumento proporcional en la sanción, sin mesetas ni discontinuidades.
 \end{enumerate}
 
-El motivo de usar Sugeno para la sanción es técnico: el centroide de Mamdani introduce
-mesetas y micro-descensos no monótonos cerca de los bordes de cada conjunto, mientras
-que el promedio ponderado de singletons~\eqref{eq:sugeno} produce una salida
-\emph{estrictamente monótona y suave}, que es precisamente la proporcionalidad
-requerida ---a mayor exceso sobre 20~km/h, mayor sanción---. Las funciones de
-pertenencia empleadas son triangulares $\mu_{tri}(x;a,b,c)$ y trapezoidales
-$\mu_{trap}(x;a,b,c,d)$ estándar.
+\paragraph{Justificación de Takagi--Sugeno vs.~Mamdani.} La elección de Takagi--Sugeno
+sobre el defuzzificador de centroide del método Mamdani es fundamental. En un enfoque
+Mamdani de clasificación de sanción basado en el máximo de varias pertenencias
+triangulares solapadas, el centroide de la agregación produce una curva de salida con
+mesetas locales y micro-descensos no monótonos cerca de los bordes entre conjuntos
+---efecto denominado ``serrucho''---. Esta no-monotonicidad es inaceptable en una
+aplicación legal: significa que a veces un vehículo a 21~km/h recibe mayor sanción que
+uno a 22~km/h, violando el principio de proporcionalidad requerido por regulaciones de
+tránsito que especifican castigos graduales según el exceso de velocidad
+\cite{reglamento}. El promedio ponderado de singletons~\eqref{eq:sugeno} evita este
+problema: la combinación convexa de valores crecientes ($c_1 < c_2 < \cdots < c_5$)
+asegura monotonicidad estricta en toda la curva de sanción. Por tanto, Sugeno es no
+solo técnicamente preferible sino también jurídicamente más defensible, pues refleja
+una sanción que escala suavemente y sin contradicciones con el exceso de velocidad.
 
 \begin{figure}[H]
     \centering
@@ -658,52 +675,69 @@ TensorFlow, manteniendo el rendimiento y separando el uso de GPU (seguimiento) d
 CPU (reconocimiento).
 
 \subsection{Alcance, generalización y limitaciones}
-Una pregunta central es si el sistema funciona únicamente sobre los datos con los que
-se entrenó (placas, caracteres y videos específicos) o si \emph{generaliza} a casos
-nuevos. La evidencia y el diseño indican que el sistema generaliza, con condiciones:
+El sistema exhibe una capacidad significativa de generalización más allá de los datos y
+escenas utilizados durante el entrenamiento. Ello se debe a la arquitectura modular y
+a la elección de modelos preentrenados de alcance general. La demostración de
+generalización se fundamenta en los siguientes factores:
 
 \begin{itemize}
-    \item \textbf{Detección y seguimiento de vehículos.} El modelo \texttt{yolo11n}
-    está preentrenado sobre COCO (un conjunto general de 80 categorías que incluye
-    automóvil, motocicleta, bus y camión). No se entrenó con nuestros videos, por lo
-    que detecta y rastrea vehículos en cualquier escena o cámara.
-    \item \textbf{Detección de placa.} El detector se entrenó con un conjunto
-    internacional de $\sim$101\,866 imágenes de placas \cite{ds_placas}, no con nuestro
-    video. En pruebas a distintas escalas localizó la placa de forma consistente, lo
-    que confirma que aprende la apariencia general de una placa y no casos memorizados.
-    \item \textbf{Reconocimiento de caracteres.} La U-Net y la CNN se entrenaron con
-    placas de Reino Unido, Brasil e India y recortes ecuatorianos
-    \cite{ds_uk,ds_brasil,ds_seg,ds_ec}. El hecho de que lean placas ecuatorianas de
-    campus ---ausentes del entrenamiento--- demuestra generalización; la votación
-    temporal entre fotogramas corrige los errores puntuales de un solo cuadro.
+    \item \textbf{Detección y seguimiento de vehículos.} El modelo base YOLO11n proviene
+    del entrenamiento en COCO \cite{yolo11}, un conjunto de 80 categorías de alcance
+    internacional que incluye automóvil, motocicleta, bus y camión. Puesto que dicho
+    modelo no fue reentrenado con los videos del proyecto, es capaz de detectar y
+    rastrear vehículos en escenas y cámaras diversas, demostrando que ha aprendido
+    patrones de forma de vehículos más allá del dominio del entrenamiento.
+    \item \textbf{Detección de placa.} El detector de placas fue entrenado sobre un
+    conjunto internacional de aproximadamente 101\,866 imágenes \cite{ds_placas},
+    ajeno a los videos del campus. Pruebas a diferentes escalas y condiciones
+    demostraron que el detector localiza la placa de manera consistente, indicando que
+    ha aprendido la estructura geométrica general de una placa vehicular, en lugar de
+    memorizar casos específicos.
+    \item \textbf{Reconocimiento de caracteres.} La red U-Net y el clasificador CNN
+    fueron entrenados sobre datos de placas de Reino Unido, Brasil, India y Ecuador
+    \cite{ds_uk,ds_brasil,ds_seg,ds_ec}, procedentes de múltiples fuentes y contextos.
+    El hecho de que estos modelos lean correctamente placas ecuatorianas del campus
+    ---datos ausentes completamente del conjunto de entrenamiento--- constituye evidencia
+    directa de generalización; la votación temporal entre fotogramas absorbe además los
+    errores ocasionales de fotogramas individuales, mejorando la confiabilidad.
 \end{itemize}
 
-En consecuencia, el sistema \emph{no} está limitado al video usado en las pruebas:
-opera sobre cualquier cámara, vehículo y placa. No obstante, su alcance y desempeño
-están acotados por:
+En consecuencia, el sistema no está confinado al video de prueba: es capaz de operar
+sobre cámaras, vehículos y placas nuevos. Su capacidad operativa y exactitud están
+limitadas, sin embargo, por factores inherentes al diseño y al dominio:
 
 \begin{itemize}
-    \item \textbf{Formato ecuatoriano.} La validación final acepta solo la estructura
-    de tres letras y tres o cuatro dígitos; placas de otros países se descartan de
-    forma intencional, pues el sistema está dirigido al contexto nacional.
-    \item \textbf{Condiciones de captura.} La lectura es confiable cuando la placa se
-    observa con suficientes píxeles (vehículo cercano), de forma razonablemente frontal
-    y sin desenfoque extremo, suciedad u oclusión; placas muy lejanas o muy borrosas
-    reducen la exactitud, según el límite de muestreo espacial ya descrito.
-    \item \textbf{Calibración de la velocidad.} La exactitud de la velocidad depende de
-    una distancia entre líneas correctamente medida, su posición acorde a la escena y un
-    fps efectivo suficiente.
-    \item \textbf{Confusiones residuales.} Persisten confusiones entre caracteres
-    visualmente similares (O/0, I/1), mitigadas ---no eliminadas--- por la votación.
+    \item \textbf{Restricción de formato.} La validación final impone la estructura de
+    tres caracteres alfabéticos seguidos de tres o cuatro dígitos, acorde al estándar
+    ecuatoriano. Placas de otros países se rechazan de forma deliberada, en concordancia
+    con el enfoque específico del sistema.
+    \item \textbf{Dependencia de condiciones ópticas.} La lectura confiable requiere que
+    la placa se observe con resolución suficiente (vehículo en proximidad), ángulo de
+    observación aproximadamente frontal, y ausencia de desenfoque extremo, suciedad u
+    oclusión. Placas lejanas o severamente desenfocadas experimentan degradación de
+    exactitud, conforme a los límites de muestreo espacial descritos en metodología.
+    \item \textbf{Calibración de distancia en velocidad.} La exactitud de la medición de
+    velocidad depende críticamente de que la distancia entre líneas de medición sea
+    correctamente calibrada a la geometría real de la escena, que su posicionamiento sea
+    acorde a la topografía de la zona, y que la frecuencia de fotogramas sea suficiente
+    para capturar transiciones.
+    \item \textbf{Confusiones residuales de similitud.} El clasificador exhibe confusión
+    ocasional entre caracteres morfológicamente similares (p.~ej.\ O/0, I/1), efecto
+    que se mitiga ---pero no se elimina--- mediante la votación temporal.
 \end{itemize}
 
-En síntesis, para un despliegue nuevo basta con apuntar la cámara, calibrar las dos
-líneas a la distancia real y asegurar que las placas se vean legibles; no se requiere
-reentrenar ningún modelo.
+Por tanto, para despliegues futuros es suficiente orientar la cámara hacia la zona de
+medición, calibrar las dos líneas virtuales a la distancia real medida en el terreno, y
+asegurar que las placas sean observadas con claridad óptica. No es requerido el
+reentrenamiento de modelos.
 
 \subsection{Habilidades blandas empleadas}
-$\blacksquare$ Trabajo en equipo \quad $\blacksquare$ Responsabilidad \quad
-$\blacksquare$ Pensamiento crítico \quad $\blacksquare$ Resolución de problemas
+\begin{itemize}
+    \item[] $\blacksquare$ Trabajo en equipo
+    \item[] $\blacksquare$ Responsabilidad
+    \item[] $\blacksquare$ Pensamiento crítico
+    \item[] $\blacksquare$ Resolución de problemas
+\end{itemize}
 
 \subsection{Conclusiones}
 \begin{itemize}
