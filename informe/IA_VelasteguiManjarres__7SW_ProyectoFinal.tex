@@ -19,9 +19,11 @@
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{xcolor}
+\usepackage{multirow}
 \usepackage{tikz}
 \usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, fit, backgrounds, shadows.blur}
 \usepackage[hidelinks]{hyperref}
+\usepackage{xurl}  % permite quebrar URLs largas en cualquier carácter
 
 \pagestyle{fancy}
 \fancyhf{}
@@ -43,7 +45,6 @@
 \preto{\subsection}{\Needspace{10\baselineskip}}
 \preto{\subsubsection}{\Needspace{8\baselineskip}}
 
-% Colores y estilos para diagramas TikZ
 \definecolor{cazul}{HTML}{1d4ed8}
 \definecolor{cverde}{HTML}{059669}
 \definecolor{cnaranja}{HTML}{ea580c}
@@ -55,8 +56,8 @@
   flecha/.style={-{Stealth[length=2.4mm]}, line width=0.8pt, draw=cgris},
 }
 
-\title{Informe del Proyecto}
 \raggedbottom
+\setlength{\emergencystretch}{3em}
 
 \begin{document}
 
@@ -68,7 +69,9 @@
     \textbf{\underline{\normalsize PROYECTO FINAL}}
 \end{center}
 
+% ---------------------------------------------------------------------------
 \section{PORTADA}
+% ---------------------------------------------------------------------------
 
 \begin{center}
     \textbf{UNIVERSIDAD TÉCNICA DE AMBATO}\\
@@ -91,60 +94,75 @@
     \textbf{Docente:} \> Ing. Rubén Nogales, Mg.
 \end{tabbing}
 
+% ---------------------------------------------------------------------------
 \section{INFORME DEL PROYECTO}
 \renewcommand{\thesection}{\arabic{section}}
 \setcounter{section}{0}
+% ---------------------------------------------------------------------------
 
 \subsection{Título}
 Sistema inteligente de radar vehicular para la medición simultánea de velocidad de
 múltiples vehículos, el reconocimiento de placas ecuatorianas y la evaluación difusa
 de sanciones proporcionales en un entorno universitario controlado.
 
+% ---------------------------------------------------------------------------
 \subsection{Resumen}
-El proyecto implementa un radar vehicular inteligente orientado al control de
-velocidad en una zona universitaria. La solución procesa video en tiempo real o desde
-archivo y rastrea \emph{simultáneamente} a todos los vehículos del cuadro mediante un
-detector YOLO11 acoplado al algoritmo de seguimiento ByteTrack, lo que permite medir
-la velocidad de entre uno y seis vehículos a la vez. La velocidad se estima cuando el
+% ---------------------------------------------------------------------------
+El proyecto implementa un radar vehicular inteligente orientado al control de velocidad
+en una zona universitaria. La solución procesa video en tiempo real o desde archivo y
+rastrea \emph{simultáneamente} a todos los vehículos del cuadro mediante un detector
+YOLO11 acoplado al algoritmo de seguimiento ByteTrack, lo que permite medir la
+velocidad de entre uno y seis vehículos a la vez. La velocidad se estima cuando el
 vehículo cruza dos líneas virtuales separadas por una distancia conocida. Para cada
-vehículo cercano se detecta la placa con un modelo YOLO, se segmentan sus caracteres
-con una red U-Net y se clasifican individualmente con una CNN de 36 clases
-alfanuméricas; la lectura se estabiliza por votación temporal entre fotogramas y se
-valida con el formato ecuatoriano de tres letras y tres o cuatro dígitos. Los modelos
-de reconocimiento, entrenados originalmente en Keras, se convirtieron a formato ONNX
-para ejecutarse sobre \texttt{onnxruntime} en Python~3.14 sin TensorFlow. La decisión
-disciplinaria se realiza con un sistema difuso de dos etapas: una clasificación
-Mamdani (felicitación / normal / multa) y una inferencia Takagi--Sugeno que convierte
-el exceso sobre el límite de 20~km/h en horas de indisponibilidad de forma suave,
-monótona y proporcional. El sistema registra los eventos, almacena evidencias
-visuales, notifica por correo electrónico y expone una interfaz web de monitoreo.
+vehículo detectado se localiza la placa con un modelo YOLO especializado; el texto de
+la placa se extrae mediante una cadena de procesamiento que combina técnicas clásicas
+de visión por computador ---escala de grises, realce adaptativo CLAHE, umbralización
+adaptativa gaussiana, aislamiento de banda y análisis de componentes conexos--- con un
+clasificador de caracteres propio basado en la arquitectura ResNet18 \cite{resnet}
+modificada para entrada en escala de grises y 36 clases alfanuméricas. El sistema
+también integra, como backend primario de OCR, modelos ONNX externos de segmentación
+y clasificación que amplían la generalización sobre placas de aspecto variado. La
+lectura se estabiliza por votación temporal ponderada entre fotogramas y se valida con
+el formato ecuatoriano de tres letras y tres o cuatro dígitos. La decisión
+disciplinaria se realiza con un sistema difuso de dos etapas: una clasificación Mamdani
+(felicitación / normal / multa) \cite{mamdani} y una inferencia Takagi--Sugeno
+\cite{sugeno} que convierte el exceso sobre el límite de 20~km/h en horas de
+indisponibilidad de forma suave, monótona y proporcional. El sistema registra los
+eventos, almacena evidencias visuales, notifica por correo electrónico y expone una
+interfaz web de monitoreo en tiempo real.
 
 \subsection{Palabras clave}
-Visión por computador, seguimiento multi-objeto, reconocimiento de placas, U-Net,
-CNN, YOLO, ByteTrack, lógica difusa, Mamdani, Takagi--Sugeno, ONNX, radar vehicular.
+Visión por computador, seguimiento multi-objeto, reconocimiento de placas vehiculares,
+ResNet18, CLAHE, componentes conexos, YOLO, ByteTrack, lógica difusa, Mamdani,
+Takagi--Sugeno, ONNX, radar vehicular.
 
+% ---------------------------------------------------------------------------
 \subsection{Objetivos}
+% ---------------------------------------------------------------------------
 \textbf{General:}
 \begin{itemize}
     \item Desarrollar un sistema inteligente de radar vehicular que mida la velocidad
     de varios vehículos de forma simultánea, reconozca sus placas ecuatorianas y
     sugiera una sanción proporcional mediante lógica difusa, integrando todo en una
-    aplicación web de monitoreo.
+    aplicación web de monitoreo en tiempo real.
 \end{itemize}
 
 \textbf{Específicos:}
 \begin{itemize}
     \item Implementar el seguimiento multi-vehículo con YOLO11 y ByteTrack para medir
     la velocidad de cada vehículo al cruzar dos líneas virtuales calibradas.
-    \item Reconocer la cadena alfanumérica de la placa combinando detección con YOLO,
-    segmentación de caracteres con U-Net y clasificación con CNN, validando el formato
-    vehicular ecuatoriano.
-    \item Desplegar los modelos de reconocimiento mediante ONNX para ejecutarlos sin
-    dependencia de TensorFlow, garantizando portabilidad y rendimiento.
-    \item Diseñar un sistema de inferencia difusa que clasifique la conducta y calcule
-    una sanción estrictamente proporcional al exceso de velocidad.
+    \item Reconocer la cadena alfanumérica de la placa combinando preprocesamiento de
+    imagen clásico (CLAHE, umbralización adaptativa, análisis de componentes conexos)
+    con un clasificador ResNet18 propio de 36 clases y decodificación posicional, con
+    validación del formato vehicular ecuatoriano.
+    \item Integrar modelos ONNX externos de segmentación y clasificación de caracteres
+    como backend primario de OCR, ejecutándolos con \texttt{onnxruntime} sin
+    dependencia de TensorFlow, garantizando portabilidad y separación de uso de GPU.
+    \item Diseñar un sistema de inferencia difusa en dos etapas que clasifique la
+    conducta vehicular y calcule una sanción estrictamente proporcional al exceso de
+    velocidad mediante Takagi--Sugeno.
     \item Presentar los eventos, las evidencias y el razonamiento difuso en una
-    interfaz web, con notificación automática por correo de las infracciones.
+    interfaz web con historial y notificación automática por correo de las infracciones.
 \end{itemize}
 
 \subsection{Modalidad}
@@ -152,18 +170,25 @@ CNN, YOLO, ByteTrack, lógica difusa, Mamdani, Takagi--Sugeno, ONNX, radar vehic
     \hspace{1cm} \= Presencial.
 \end{tabbing}
 
+% ---------------------------------------------------------------------------
 \subsection{Listado de equipos, materiales y recursos}
+% ---------------------------------------------------------------------------
 \begin{itemize}
-    \item Computador con GPU NVIDIA (aceleración CUDA para los detectores YOLO).
-    \item Cámara web / teléfono como fuente de video; videos de tránsito del campus.
-    \item Entorno de desarrollo Python 3.14.
-    \item Internet y material del aula virtual de la asignatura.
-    \item Herramientas para generar documentos en formato PDF.
+    \item Computador con GPU NVIDIA (aceleración CUDA para los detectores YOLO y
+    entrenamiento CNN).
+    \item Cámara web / teléfono como fuente de video en tiempo real; videos de tránsito
+    del campus universitario para pruebas fuera de línea.
+    \item Entorno de desarrollo Python 3.14 con entorno virtual aislado.
+    \item Conjuntos de datos públicos: EMNIST Letters, MNIST y
+    \emph{Dataset\_OCR\_Placas} de Roboflow Universe (CC~BY~4.0) para el
+    clasificador de caracteres; \emph{License Plate Recognition} v13 (Roboflow,
+    CC~BY~4.0) para el detector de placa.
+    \item Herramientas de escritura científica: \LaTeX{} con pdflatex para el informe.
 \end{itemize}
 
 \subsubsection*{Dependencias de Python utilizadas}
-La Tabla~\ref{tab:dependencias} detalla cada dependencia, su función y el uso
-concreto que se le dio dentro del sistema. Todas son de código abierto.
+La Tabla~\ref{tab:dependencias} detalla cada dependencia, su función en el ecosistema
+y el uso concreto asignado en el sistema.
 
 \begin{table}[H]
     \centering
@@ -171,51 +196,51 @@ concreto que se le dio dentro del sistema. Todas son de código abierto.
     \caption{Dependencias del sistema: función y uso concreto.}
     \label{tab:dependencias}
     \renewcommand{\arraystretch}{1.25}
-    \begin{tabular}{>{\raggedright\arraybackslash}p{2.6cm} >{\raggedright\arraybackslash}p{4.2cm} >{\raggedright\arraybackslash}p{7.0cm}}
+    \begin{tabular}{>{\raggedright\arraybackslash}p{2.6cm}
+                    >{\raggedright\arraybackslash}p{4.2cm}
+                    >{\raggedright\arraybackslash}p{7.0cm}}
         \toprule
         \textbf{Dependencia} & \textbf{Qué hace} & \textbf{Cómo se usó en el sistema} \\
         \midrule
-        \texttt{ultralytics} & Implementación de modelos YOLO y del seguimiento
-        multi-objeto (ByteTrack). & Carga \texttt{yolo11n} (COCO) para detectar y
-        \emph{rastrear} todos los vehículos del cuadro, y el modelo de placa
-        (\emph{License\_Plate}) para localizar la región de la placa en cada vehículo. \\
+        \texttt{ultralytics} & Implementación de modelos YOLO y de ByteTrack. &
+        Carga \texttt{yolo11n} (COCO) para detectar y rastrear todos los vehículos del
+        cuadro, y el modelo especializado (\texttt{best.pt}) para localizar la placa. \\
 
-        \texttt{onnxruntime} & Motor de inferencia de modelos en formato ONNX,
-        independiente del framework de entrenamiento. & Ejecuta en CPU la U-Net de
-        segmentación de caracteres y la CNN de clasificación, convertidas desde Keras.
-        Permite usar el OCR en Python~3.14 sin TensorFlow. \\
+        \texttt{onnxruntime} & Motor de inferencia ONNX independiente del framework
+        de entrenamiento. & Ejecuta en CPU los modelos ONNX externos de segmentación
+        y clasificación de caracteres (backend primario de OCR) sin requerir
+        TensorFlow; evita conflictos de memoria GPU con PyTorch. \\
 
-        \texttt{torch} & Backend de cómputo en GPU de los modelos YOLO. & Acelera en
-        CUDA la detección y el seguimiento de vehículos/placas; la GPU queda dedicada
-        a YOLO mientras el OCR corre en CPU vía ONNX. \\
+        \texttt{torch} / \texttt{torchvision} & Backend de cómputo GPU y colección de
+        modelos y datasets de visión. & Implementa la arquitectura ResNet18 del
+        clasificador propio, carga los datasets EMNIST y MNIST para entrenamiento, y
+        aceleración CUDA para YOLO. \\
 
         \texttt{opencv-python} & Procesamiento de imagen y video clásico. & Captura de
-        cámara/archivo, recorte y escalado de placas, enderezado por Hough,
-        binarización y componentes conexos en el postproceso, y dibujo del HUD
-        (líneas, cajas, etiquetas) sobre el video. \\
+        cámara y archivo; conversión a escala de grises, CLAHE, umbralización
+        adaptativa gaussiana, morfología, componentes conexos, aislamiento de banda,
+        corrección de nitidez, upscaling bicúbico y dibujado del HUD. \\
 
-        \texttt{numpy} & Cálculo numérico vectorial sobre matrices. & Representa
-        imágenes y máscaras, arma los \emph{batches} de entrada a los modelos ONNX y
-        realiza la votación y los cálculos del sistema difuso. \\
+        \texttt{numpy} & Cálculo numérico sobre arreglos multidimensionales. &
+        Representa imágenes y máscaras; construye los \emph{batches} de entrada a la
+        CNN y a ONNX; realiza la votación temporal y los cálculos del sistema difuso. \\
 
-        \texttt{scikit-fuzzy} & Funciones de pertenencia difusa (triangular,
-        trapezoidal) e interpolación. & Define las pertenencias de velocidad y los
-        sub-niveles de severidad, base de la clasificación Mamdani y de la sanción
-        Takagi--Sugeno. \\
+        \texttt{scikit-fuzzy} & Funciones de pertenencia difusa e interpolación. &
+        Define las curvas triangulares y trapezoidales de velocidad para la
+        clasificación Mamdani y los sub-niveles de sanción Takagi--Sugeno. \\
 
-        \texttt{fastapi} / \texttt{uvicorn} & Framework y servidor web asíncrono. &
-        Exponen la API REST (iniciar/detener, configurar fuente y distancia),
-        transmiten el video procesado (MJPEG) y emiten los eventos al frontend. \\
+        \texttt{fastapi} / \texttt{uvicorn} & Framework y servidor web ASGI. &
+        API REST (iniciar/detener, configurar fuente y distancia), streaming MJPEG al
+        navegador y emisión de eventos al frontend vía WebSocket. \\
 
-        \texttt{matplotlib} & Generación de figuras. & Renderiza el razonamiento difuso
-        (pertenencias de velocidad y curva de sanción) que se muestra en el modal del
-        evento y se adjunta en el correo. \\
+        \texttt{matplotlib} & Generación de figuras en memoria. & Renderiza el
+        razonamiento difuso (curvas de pertenencia y curva de sanción) para adjuntar
+        en el correo y mostrar en el modal del evento. \\
         \bottomrule
     \end{tabular}
 \end{table}
 
 \textbf{TAC (Tecnologías para el Aprendizaje y Conocimiento):}
-
 \begin{itemize}
     \item[] $\square$ Plataformas educativas
     \item[] $\blacksquare$ Aplicaciones educativas
@@ -223,47 +248,75 @@ concreto que se le dio dentro del sistema. Todas son de código abierto.
     \item[] $\square$ Recursos audiovisuales
 \end{itemize}
 
-\subsection{Planteamiento del problema}
-La identificación automática de vehículos por su placa es una aplicación frecuente de
-la visión por computador en el control de accesos, la seguridad y el monitoreo de
-tránsito \cite{alpr_survey}. En entornos universitarios el control de velocidad es
-crítico para la protección peatonal, pero la vigilancia manual es costosa, no genera
-evidencia objetiva y no escala cuando circulan varios vehículos a la vez.
+% ---------------------------------------------------------------------------
+\subsection{Introducción}
+% ---------------------------------------------------------------------------
+El control de velocidad vehicular mediante visión por computador representa un área
+activa de investigación en sistemas inteligentes de transporte. La identificación
+automática de placas vehiculares (ALPR) se ha consolidado como tecnología base para
+vincular una infracción con el vehículo responsable \cite{alpr_survey}. En entornos
+universitarios, donde la velocidad permitida es baja y el tráfico peatonal es intenso,
+un sistema de este tipo puede generar evidencia objetiva ante conductas de riesgo sin
+requerir intervención humana permanente. Trabajos previos han integrado visión
+artificial para el control de ingreso vehicular en parqueaderos universitarios
+\cite{alpr_ups} y para la detección de placas a partir de imágenes estáticas
+\cite{alpr_loja}.
 
-El problema abordado es, por tanto, construir un radar que, a partir de una sola
-cámara, sea capaz de: (i)~medir la velocidad de \emph{múltiples} vehículos
-simultáneamente; (ii)~leer de forma confiable la placa ecuatoriana de cada uno pese a
-la distancia, el desenfoque por movimiento y la inclinación; y (iii)~traducir el
-exceso de velocidad en una sanción \emph{proporcional} e interpretable, evitando los
-saltos bruscos de los umbrales rígidos. Cada uno de estos puntos plantea un reto
-técnico distinto: el seguimiento estable de identidades, el reconocimiento robusto de
-caracteres y la toma de decisiones bajo variables graduales.
+Desde el punto de vista técnico, los sistemas ALPR se organizan en etapas:
+adquisición, localización de la placa, segmentación de caracteres y reconocimiento
+final \cite{alpr_survey}. Los detectores de objetos de una sola etapa, en particular
+la familia YOLO, han demostrado velocidad y precisión adecuadas para el procesamiento
+en tiempo real \cite{yolo11}. El seguimiento de múltiples objetos con ByteTrack
+permite mantener identidades estables bajo variaciones de confianza de detección
+\cite{bytetrack}. El reconocimiento de caracteres puede abordarse mediante técnicas
+clásicas de segmentación (umbralización adaptativa, componentes conexos) combinadas
+con clasificadores basados en redes residuales \cite{resnet}, o mediante modelos de
+segmentación aprendida como la U-Net \cite{unet}. La decisión de sanción, por su
+parte, se beneficia de la lógica difusa cuando las variables son continuas y graduales
+\cite{zadeh, mamdani, sugeno}.
 
+El problema abordado es construir un radar que, a partir de una sola cámara, sea
+capaz de: (i)~medir la velocidad de \emph{múltiples} vehículos simultáneamente;
+(ii)~leer de forma confiable la placa ecuatoriana de cada vehículo pese a la
+distancia, el desenfoque por movimiento y la variación de ángulo; y (iii)~traducir el
+exceso de velocidad en una sanción proporcional e interpretable.
+
+% ---------------------------------------------------------------------------
 \subsection{Marco de referencia: formato de placas ecuatorianas}
-El sistema considera placas ecuatorianas de seis o siete caracteres: tres letras
-iniciales seguidas de tres o cuatro dígitos (p.~ej.\ \texttt{ABC-1234}). Esta
-estructura se aprovecha como una capa de validación que descarta lecturas anómalas
-generadas por ruido visual o regiones que no corresponden a una placa, y permite
-aceptar tanto el modelo actual como el antiguo de placa ecuatoriana.
+% ---------------------------------------------------------------------------
+El sistema se diseña para placas ecuatorianas de seis o siete caracteres: tres letras
+mayúsculas seguidas de tres o cuatro dígitos (p.~ej.\ \texttt{ABC-1234}). Ecuador
+dispone de dos modelos en circulación: el modelo actual de fondo blanco con letras
+azules e identificador «ECUADOR» en la franja superior, y el modelo anterior de fondo
+blanco liso. Ambos comparten la misma estructura alfanumérica \cite{alpr_loja}. Además
+de los caracteres principales, las placas contienen elementos visuales que no deben
+reconocerse como caracteres: el encabezado «ECUADOR», el logotipo de la Agencia
+Nacional de Tránsito (ANT), los orificios de tornillo y el separador. El sistema
+aprovecha la estructura de tres letras + dígitos como capa de validación al final del
+pipeline, descartando cualquier lectura que no satisfaga esa expresión regular.
 
+% ---------------------------------------------------------------------------
 \subsection{Metodología}
+% ---------------------------------------------------------------------------
 
 \subsubsection{Arquitectura general del sistema}
-El sistema se organiza en cuatro bloques: adquisición y seguimiento de video, pipeline
-de visión por computador, decisión difusa y backend/frontend de monitoreo. La
-Figura~\ref{fig:arquitectura} resume el flujo completo de un evento.
+
+El sistema se organiza en cuatro bloques funcionales: adquisición y seguimiento de
+video, pipeline de visión para el reconocimiento de placas, módulo de decisión difusa
+y backend con frontend web de monitoreo. La Figura~\ref{fig:arquitectura} muestra el
+flujo completo desde la captura del video hasta el registro del evento.
 
 \begin{figure}[H]
     \centering
     \begin{tikzpicture}[node distance=0.55cm and 0.7cm]
         \node[etapa=cazul] (cap) {1. Captura de video (cámara / archivo)};
-        \node[etapa=cazul, right=of cap] (track) {2. Seguimiento multi-vehículo \\ YOLO11 + ByteTrack};
-        \node[etapa=cazul, right=of track] (vel) {3. Cruce de 2 líneas \\ $\rightarrow$ velocidad};
-        \node[etapa=cverde, below=0.9cm of vel] (det) {4. Detección de placa (YOLO)};
-        \node[etapa=cverde, left=of det] (ocr) {5. OCR: U-Net + CNN (ONNX)};
-        \node[etapa=cverde, left=of ocr] (voto) {6. Votación temporal + formato EC};
+        \node[etapa=cazul, right=of cap] (track) {2. YOLO11 + ByteTrack multi-vehículo};
+        \node[etapa=cazul, right=of track] (vel) {3. Cruce 2 líneas $\rightarrow$ velocidad};
+        \node[etapa=cverde, below=0.9cm of vel] (det) {4. YOLO: localiza región de placa};
+        \node[etapa=cverde, left=of det] (ocr) {5. OCR: CLAHE + seg. + clasificador CNN};
+        \node[etapa=cverde, left=of ocr] (voto) {6. Votación temporal + validación EC};
         \node[etapa=cmorado, below=0.9cm of voto] (fuzzy) {7. Difuso: Mamdani + Sugeno};
-        \node[etapa=cnaranja, right=of fuzzy] (reg) {8. Registro + evidencia};
+        \node[etapa=cnaranja, right=of fuzzy] (reg) {8. Registro + evidencia (SQLite)};
         \node[etapa=cnaranja, right=of reg] (out) {9. Correo + frontend web};
 
         \draw[flecha] (cap) -- (track);
@@ -281,151 +334,296 @@ Figura~\ref{fig:arquitectura} resume el flujo completo de un evento.
     {\footnotesize Fuente: Elaboración propia.}
 \end{figure}
 
-\subsubsection{Seguimiento multi-vehículo y medición de velocidad}
-A diferencia de un enfoque de un solo vehículo, el sistema rastrea \emph{todos} los
-vehículos del cuadro. Cada fotograma se reduce al 50\,\% y se procesa con un detector
-YOLO11 en su variante \emph{nano} (clases COCO: automóvil, motocicleta, bus y camión)
-\cite{yolo11}, acoplado al algoritmo de seguimiento ByteTrack, que asocia cada
-detección con una identidad estable entre fotogramas \cite{bytetrack}. Gracias a estas
-identidades, el sistema mantiene un estado independiente por vehículo (cruces, tiempos,
-lecturas de placa), lo que habilita la medición simultánea de entre uno y seis
-vehículos.
+\subsubsection{Dominios de muestreo de la cámara}
 
-La zona de medición se define con dos líneas virtuales separadas por una distancia
-conocida $d$. Para cada vehículo se observa el punto de contacto con el suelo
-(centro inferior de su caja). Cuando ese punto cruza la primera línea se registra el
-tiempo $t_a$ y cuando cruza la segunda, $t_b$. La velocidad se calcula como:
+\paragraph{Dominio espacial: resolución y detección.}
+La detección de la placa opera sobre el recorte del vehículo extraído del fotograma
+a su resolución completa. El recorte de placa resultante se envía al módulo de OCR
+sin reducción de resolución. Cuando su altura es inferior a 72~píxeles (vehículo
+lejano), se aplica un escalado bicúbico antes del reconocimiento: la interpolación
+bicúbica preserva mejor los bordes de los caracteres que la bilineal o la de vecino
+más próximo. El detector YOLO procesa internamente la imagen a un tamaño fijo
+($416\times416$), pero la extracción del recorte siempre se realiza sobre el
+fotograma original de alta resolución.
+
+\paragraph{Dominio temporal: velocidad.}
+La zona de medición se define con dos líneas virtuales con una distancia real
+calibrada $d$. El punto de referencia del vehículo es el centro inferior de su caja
+delimitadora. Al cruzar la primera línea se registra el tiempo $t_a$; al cruzar la
+segunda, $t_b$. La velocidad es:
 \begin{equation}
-    v = \frac{d}{|t_b - t_a|}\times 3.6 \quad [\text{km/h}],
+    v = \frac{d}{\,t_b - t_a\,}\times 3.6 \quad [\text{km/h}].
     \label{eq:velocidad}
 \end{equation}
-donde el factor $3.6$ convierte de m/s a km/h. Para fuentes de archivo se emplean las
-marcas de tiempo del propio video (no el reloj de CPU), de modo que la medición es
-exacta aunque el procesamiento sea más lento que el tiempo real.
+Para fuentes de archivo se emplean las marcas de tiempo del video, no el reloj de
+CPU, lo que garantiza exactitud aunque el procesamiento sea más lento que el tiempo
+real. El número de fotogramas observados durante el cruce, $N = (t_b-t_a)\times F_s$,
+determina la confiabilidad de la medición: con pocos fotogramas el error relativo
+es mayor, en concordancia con el criterio de Nyquist en el dominio temporal
+\cite{szeliski}.
 
-\paragraph{Criterio de muestreo (Nyquist).} La confiabilidad de la medición depende
-del número de fotogramas observados durante el cruce, $N = dt \cdot F_s$, con $F_s$ el
-fps efectivo. Con pocos fotogramas el sistema dispone de poca evidencia temporal y la
-velocidad puede inflarse; con más fotogramas el error relativo disminuye como
-$\approx 1/N$. Esta es la versión temporal del criterio de muestreo: la frecuencia
-debe ser suficiente para capturar el fenómeno de interés \cite{szeliski}. De forma
-análoga, en el dominio espacial la resolución determina cuántos píxeles cubren la
-placa; una placa lejana se reduce a muy pocos píxeles y pierde legibilidad.
+\subsubsection{Seguimiento multi-vehículo (YOLO11 + ByteTrack)}
 
-\subsubsection{Detección de la placa}
-La región de la placa se localiza con un modelo YOLO entrenado para una sola clase
-(\emph{License\_Plate}). YOLO se eligió por su detección en una sola etapa, adecuada
-para tiempo real \cite{yolo11}. La red redimensiona internamente la entrada a
-$416\times416$, pero el recorte de la placa se extrae del fotograma original en su
-resolución completa; así las etapas posteriores de segmentación y clasificación
-disponen del máximo detalle posible. Cuando la placa recortada es pequeña se amplía
-por interpolación cúbica antes del OCR.
+Cada fotograma se escala al 50\,\% y se procesa con YOLO11~nano preentrenado en
+COCO \cite{yolo11} (clases relevantes: automóvil, motocicleta, bus, camión). Las
+detecciones se asocian entre fotogramas con ByteTrack \cite{bytetrack}, un algoritmo
+de asociación que mantiene identidades estables incluso cuando la confianza de
+detección es baja, diferenciando vehículos temporalmente ocultos (\emph{lost}) de los
+que siguen en tránsito. ByteTrack utiliza la intersección sobre unión (IoU) entre
+cajas detectadas y trayectorias predichas para la asociación, y la distancia de
+Kalman para predecir la posición del vehículo cuando no se detecta en un fotograma
+concreto.
 
-\subsubsection{Reconocimiento de la placa: U-Net + CNN}
-El reconocimiento se realiza en tres pasos (Figura~\ref{fig:ocr}). Primero, el recorte
-de la placa se endereza por rotación estimando la inclinación con la transformada de
-Hough (corrección puramente geométrica, sin dependencias adicionales). Segundo, una
-red U-Net \cite{unet} de entrada $96\times256\times1$ produce una máscara
-probabilística donde cada píxel indica su probabilidad de pertenecer a un carácter; la
-máscara se binariza, se extraen contornos y se generan recortes individuales por
-carácter. La U-Net \emph{no} clasifica caracteres: su única función es separar a nivel
-de píxel las regiones de tinta, lo que generaliza mucho mejor que una umbralización
-fija ante placas variadas, sombras o inclinación. Tercero, cada recorte se redimensiona
-a $64\times64$ y se clasifica con una CNN de 36 clases (dígitos 0--9 y letras A--Z) de
-filosofía VGG con \emph{Global Average Pooling} \cite{cnn_chars}.
+Gracias a las identidades persistentes, el sistema mantiene un estado independiente
+por vehículo: cruces de líneas, tiempos, lecturas de placa acumuladas. Esto habilita
+la medición simultánea de varios vehículos sin cruzar sus datos. Una vez completado
+el cruce se inicia el pipeline de lectura de placa; al finalizar, el evento se
+registra con la placa leída (o con la etiqueta \texttt{SIN-LECTURA} si el OCR no
+converge), la velocidad y la sanción difusa, garantizando que ningún vehículo medido
+quede sin registro.
 
-\begin{figure}[H]
-    \centering
-    \begin{tikzpicture}[node distance=0.55cm]
-        \node[etapa=cverde] (a) {Recorte de placa (YOLO)};
-        \node[etapa=cverde, right=of a] (b) {Enderezado (Hough)};
-        \node[etapa=cverde, right=of b] (c) {U-Net $96{\times}256$ \\ máscara de chars};
-        \node[etapa=cverde, right=of c] (d) {Cajas + recortes por carácter};
-        \node[etapa=cverde, below=0.8cm of d] (e) {CNN $64{\times}64$ \\ 36 clases};
-        \node[etapa=cverde, left=of e] (f) {Formato EC \\ 3 letras + 3/4 díg.};
-        \node[etapa=cmorado, left=of f] (g) {Texto crudo \\ al votador};
-        \draw[flecha] (a)--(b); \draw[flecha] (b)--(c); \draw[flecha] (c)--(d);
-        \draw[flecha] (d)--(e); \draw[flecha] (e)--(f); \draw[flecha] (f)--(g);
-    \end{tikzpicture}
-    \caption{Cadena de reconocimiento de la placa: detección, enderezado, segmentación
-    U-Net, clasificación CNN y validación de formato.}
-    \label{fig:ocr}
-    \vspace{2pt}
-    {\footnotesize Fuente: Elaboración propia.}
-\end{figure}
+\subsubsection{Detección de la placa vehicular (YOLO)}
 
-\paragraph{Despliegue con ONNX (sin TensorFlow).} Los pesos de la U-Net y de la CNN se
-entrenaron originalmente en Keras (formato \texttt{.keras}). Dado que el entorno de
-ejecución es Python~3.14 ---donde TensorFlow no dispone de paquetes--- los modelos se
-convirtieron una sola vez a formato ONNX y se ejecutan con \texttt{onnxruntime}
-\cite{onnxruntime}. Esta decisión elimina la dependencia de TensorFlow, evita el
-conflicto de memoria de GPU con PyTorch (usado por YOLO) y mantiene la inferencia del
-OCR en CPU, liberando la GPU para el seguimiento.
+La región de la placa se localiza con un modelo YOLO de una sola clase
+(\emph{License\_Plate}), operando sobre el recorte del vehículo para reducir el área
+de búsqueda y minimizar falsos positivos por elementos del fondo. La caja resultante
+se amplía un 8\,\% en cada borde para incluir los caracteres que puedan estar en el
+límite de la detección, antes de enviarla al módulo de OCR.
 
-\subsubsection{Validación de formato y votación temporal}
-Como la misma placa se observa en muchos fotogramas mientras el vehículo cruza la zona,
-el sistema acumula las lecturas crudas por vehículo y produce un \emph{consenso} por
-votación posición a posición ponderada por confianza y por tamaño de la placa (los
-fotogramas cercanos pesan más). Sobre ese consenso se aplica la validación de formato
-ecuatoriano; sólo se registra un evento cuando el consenso cumple la estructura
-\texttt{3~letras + 3/4~dígitos}. La votación corrige los errores de un solo fotograma
-(desenfoque, ángulo) y eleva notablemente la precisión final.
+\subsubsection{Pipeline de reconocimiento de caracteres (OCR)}
+\label{sec:ocr}
 
-\subsubsection{Sistema de inferencia difusa}
-La decisión disciplinaria se modela con lógica difusa, adecuada cuando intervienen
-variables graduales como la velocidad, en lugar de umbrales rígidos \cite{zadeh}. El
-diseño tiene dos etapas (Figura~\ref{fig:fuzzy}):
+El módulo de OCR recibe el recorte de placa y produce el texto crudo de la cadena de
+caracteres. El sistema emplea dos backends OCR con selección automática:
 
 \begin{enumerate}
-    \item \textbf{Clasificación (Mamdani).} Tres conjuntos difusos de velocidad
-    ---\emph{felicitación} (0--10), \emph{normal} (10--20) y \emph{multa} ($>$20)---
-    determinan la categoría por máxima pertenencia \cite{mamdani}. La pertenencia de
-    \emph{multa} es una rampa monótona desde el límite de 20~km/h, lo que evita el
-    perfil en ``serrucho'' que produciría el máximo de varios triángulos solapados.
-    \item \textbf{Sanción (Takagi--Sugeno).} Sólo cuando la categoría es \emph{multa},
-    se calcula la sanción mediante un sistema de inferencia Takagi--Sugeno de orden
-    cero \cite{sugeno}. En lugar de una única membresía de entrada, se definen cinco
-    sub-niveles de severidad ---leve, moderada, alta, grave y extrema--- que cubren el
-    rango de velocidades 20--40~km/h con solapamiento al 50\,\%. Cada sub-nivel cuenta
-    con un consecuente \emph{singleton} (valor crisp) que representa las horas de
-    indisponibilidad: 5, 18, 34, 52 y 70 horas respectivamente. La salida se obtiene
-    como promedio ponderado de estos singletons según la activación de cada sub-nivel:
-    \begin{equation}
-        H(v) = \frac{\sum_{i=1}^{5} \mu_i(v)\, c_i}{\sum_{i=1}^{5} \mu_i(v)},
-        \label{eq:sugeno}
-    \end{equation}
-    donde $\mu_i(v)$ es el grado de pertenencia de la velocidad $v$ al sub-nivel $i$,
-    y $c_i$ es su consecuente singleton en horas. Esta formulación garantiza una salida
-    \emph{suave, monótona y proporcional}: un aumento en la velocidad produce siempre
-    un aumento proporcional en la sanción, sin mesetas ni discontinuidades.
+    \item \textbf{Backend primario (ONNX):} modelos externos de mayor generalización,
+    ejecutados con \texttt{onnxruntime} (ver sección~\ref{sec:onnx}).
+    \item \textbf{Backend secundario (CNN propia):} clasificador ResNet18 con
+    segmentación clásica por visión por computador (ver sección~\ref{sec:cnn_propia}),
+    que actúa como respaldo cuando el backend primario no produce texto válido.
 \end{enumerate}
 
-\paragraph{Justificación de Takagi--Sugeno vs.~Mamdani.} La elección de Takagi--Sugeno
-sobre el defuzzificador de centroide del método Mamdani es fundamental. En un enfoque
-Mamdani de clasificación de sanción basado en el máximo de varias pertenencias
-triangulares solapadas, el centroide de la agregación produce una curva de salida con
-mesetas locales y micro-descensos no monótonos cerca de los bordes entre conjuntos
----efecto denominado ``serrucho''---. Esta no-monotonicidad es inaceptable en una
-aplicación legal: significa que a veces un vehículo a 21~km/h recibe mayor sanción que
-uno a 22~km/h, violando el principio de proporcionalidad requerido por regulaciones de
-tránsito que especifican castigos graduales según el exceso de velocidad
-\cite{reglamento}. El promedio ponderado de singletons~\eqref{eq:sugeno} evita este
-problema: la combinación convexa de valores crecientes ($c_1 < c_2 < \cdots < c_5$)
-asegura monotonicidad estricta en toda la curva de sanción. Por tanto, Sugeno es no
-solo técnicamente preferible sino también jurídicamente más defensible, pues refleja
-una sanción que escala suavemente y sin contradicciones con el exceso de velocidad.
+La selección se controla con la variable de entorno \texttt{OCR\_BACKEND} (valor
+predeterminado: \texttt{amigo} para el backend ONNX; \texttt{cnn} para forzar el
+clasificador propio). La conmutación automática entre backends garantiza siempre un
+resultado: primero se intenta el más generalizable; si no converge, se recurre al
+propio, que tiene mayor exhaustividad (\emph{recall}).
+
+\subsubsection{Backend ONNX: modelos externos integrados}
+\label{sec:onnx}
+
+Como backend primario de OCR se integran dos modelos entrenados externamente sobre un
+corpus internacional de mayor diversidad: un modelo de segmentación semántica de
+caracteres de arquitectura U-Net \cite{unet} y un clasificador CNN de 36 clases.
+Ambos se ejecutan mediante \texttt{onnxruntime} \cite{onnxruntime} en CPU:
+
+\begin{itemize}
+    \item \textbf{Segmentador U-Net} (\texttt{amigo\_seg\_unet.onnx}): recibe la
+    imagen de placa en escala de grises a $96\times256\times1$~px y produce una
+    máscara de probabilidad por píxel. La máscara se umbraliza en 0.5; a partir de
+    las regiones activas se extraen los contornos y se generan las cajas de cada
+    carácter. La segmentación aprendida (frente a la umbralización fija) generaliza
+    mejor ante iluminación variable, fondos complejos y variaciones de tipografía.
+    \item \textbf{Clasificador CNN externo} (\texttt{amigo\_ocr\_cnn.onnx}): recibe
+    cada recorte de carácter a $64\times64\times1$~px y produce un vector de 36
+    probabilidades softmax. El modelo fue entrenado sobre un corpus que incluye placas
+    de múltiples países, lo que le confiere mayor cobertura tipográfica que el
+    clasificador propio entrenado únicamente con EMNIST, MNIST y un dataset nacional.
+\end{itemize}
+
+La ventaja principal de esta integración es que TensorFlow no es requerido en el
+entorno de ejecución (Python~3.14 no dispone de ruedas TensorFlow), evitando
+conflictos de versiones y liberando la GPU exclusivamente para el seguimiento YOLO.
+
+\subsubsection{Backend propio: segmentación clásica + ResNet18}
+\label{sec:cnn_propia}
+
+El backend propio realiza el reconocimiento de caracteres mediante una cadena de
+procesamiento clásico seguida de un clasificador neuronal entrenado por el equipo.
+
+\paragraph{Etapa 1: preprocesamiento.}
+El recorte de placa en color pasa por:
+\begin{enumerate}
+    \item \textbf{Escala de grises.} Elimina la información de color irrelevante.
+    \item \textbf{Nitidez adaptativa.} Se mide la varianza del Laplaciano; si esta
+    es inferior a 80 (desenfoque por movimiento presente), se aplica un filtro de
+    nitidez de $3\times3$ que refuerza las altas frecuencias y recupera parcialmente
+    los bordes de los caracteres.
+    \item \textbf{CLAHE} (\emph{Contrast Limited Adaptive Histogram Equalization}).
+    El histograma se ecualiza localmente en bloques de $4\times4$~px con un límite de
+    \emph{clip} de 3.0, compensando las variaciones de iluminación que una
+    ecualización global no podría corregir sin amplificar el ruido en zonas uniformes.
+\end{enumerate}
+
+\paragraph{Etapa 2: aislamiento de la banda de caracteres.}
+Las placas actuales contienen el encabezado «ECUADOR», el logo ANT y tornillos que,
+sin filtrar, generan falsos positivos en la segmentación. El sistema los elimina
+mediante un análisis de componentes conexos de dos fases:
+
+\begin{itemize}
+    \item \textbf{Fase CC (componentes conexos):} la imagen se normaliza a 64~px de
+    alto, se binariza con umbral adaptativo gaussiano local (tamaño de bloque entre
+    11 y 51~px según la altura, sustracción de constante 9) y se analizan los
+    componentes. Los candidatos a carácter deben tener: altura entre el 30\,\% y el
+    97\,\% de la imagen, relación ancho/alto entre 0.08 y 1.4, y área superior al
+    0.6\,\% del área total. Con los candidatos válidos se calcula la mediana de sus
+    posiciones verticales y se recorta la franja correspondiente.
+    \item \textbf{Fase de proyección (respaldo):} cuando la fase CC no produce
+    candidatos suficientes (placas con fondo muy oscuro o caracteres fusionados), se
+    calcula la densidad de píxeles blancos por fila (proyección horizontal), se
+    identifican los bloques activos y se selecciona el de mayor puntuación
+    ($\text{densidad}\times\sqrt{\text{longitud}}$).
+\end{itemize}
+
+\paragraph{Etapa 3: segmentación de caracteres individuales.}
+Sobre la banda aislada se aplica umbral adaptativo gaussiano y apertura morfológica
+($2\times2$) para eliminar artefactos de ruido. Los componentes conexos resultantes
+se filtran y se agrupan por mediana de alturas y centros verticales para descartar
+residuos del logo o tornillos. Los componentes supervivientes se ordenan de izquierda a
+derecha. Si algún componente es anómalamente ancho ($>1.5\times$ el ancho mediano), se
+divide en partes iguales para recuperar los caracteres fusionados.
+
+\paragraph{Etapa 4: clasificador ResNet18 propio.}
+Cada recorte de carácter se clasifica con la red residual desarrollada por el equipo.
+La arquitectura base es ResNet18 \cite{resnet}, adaptada mediante las modificaciones de
+la Tabla~\ref{tab:cnn_arch}.
+
+\begin{table}[H]
+    \centering
+    \caption{Adaptaciones de ResNet18 para el clasificador propio de caracteres.}
+    \label{tab:cnn_arch}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{>{\raggedright\arraybackslash}p{3.5cm}
+                    >{\raggedright\arraybackslash}p{10.2cm}}
+        \toprule
+        \textbf{Componente} & \textbf{Modificación respecto a ResNet18 estándar} \\
+        \midrule
+        Primera conv.\ & Conv2D(1$\to$64, $3\times3$, stride~1, padding~1, sin bias):
+        un canal de entrada (escala de grises) en lugar de tres (RGB); kernel $3\times3$
+        en lugar del $7\times7$ original para preservar detalle en imágenes de $48\times48$~px. \\
+        MaxPool inicial & Reemplazado por \texttt{Identity}: se suprime el maxpooling que
+        reduciría a la mitad el mapa de características, lo que es excesivo para
+        caracteres de baja resolución donde cada píxel es relevante. \\
+        Bloques residuales & Sin modificaciones: cuatro grupos (64, 128, 256, 512
+        canales) de dos bloques cada uno; cada bloque con dos capas Conv2D + BN + ReLU
+        y una conexión de atajo para propagar el gradiente. \\
+        Capa de salida & \texttt{Dropout(0.3)} + \texttt{Linear(512$\to$36)}: dropout
+        para regularización antes de la capa densa final de 36 logits. \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+La red recibe recortes redimensionados a $48\times48$~px (entrenamiento real) o
+$32\times32$~px (entrenamiento base), normalizados entre 0 y 1. Todos los recortes de
+un fotograma se procesan en un único \emph{batch} GPU.
+
+\paragraph{Etapa 5: decodificación posicional.}
+Las probabilidades softmax por carácter se decodifican restringiendo la búsqueda al
+subconjunto correcto según la posición: letras (A--Z) en las posiciones 1--3, dígitos
+(0--9) en las posiciones 4--7. Esta restricción posicional elimina sin ambigüedad las
+confusiones entre caracteres de grupos distintos: O$\leftrightarrow$0,
+I$\leftrightarrow$1, Z$\leftrightarrow$2, B$\leftrightarrow$8, S$\leftrightarrow$5. Si
+el número de recortes supera lo esperado por la segmentación de elementos espurios, se
+desliza una ventana de 7 y luego de 6 posiciones, eligiendo la de mayor confianza media.
+
+\subsubsection{Validación de formato y votación temporal}
+\label{sec:voto}
+
+El vehículo ocupa la zona de medición durante múltiples fotogramas. En cada fotograma
+procesado el OCR produce una lectura cruda. El sistema acumula estas lecturas por
+vehículo (identificado por su ID de ByteTrack) y produce un consenso por votación
+posición a posición: gana el carácter con más votos en cada posición; los empates
+se resuelven por la confianza del clasificador. Los fotogramas donde la placa ocupa
+mayor área (vehículo más cercano) reciben mayor peso en la votación. Sobre el consenso
+se aplica la validación de formato ecuatoriano (expresión regular
+\texttt{[A-Z]\{3\}[0-9]\{3,4\}}); sólo se registra un evento cuando el consenso
+satisface esta condición.
+
+% ---------------------------------------------------------------------------
+\subsubsection{Sistema de inferencia difusa}
+% ---------------------------------------------------------------------------
+
+La decisión disciplinaria se modela con lógica difusa \cite{zadeh}, adecuada cuando la
+velocidad es una variable continua y la sanción debe reflejar esa continuidad en lugar
+de escalones rígidos. El diseño se realiza en dos etapas:
+
+\begin{enumerate}
+    \item \textbf{Clasificación (Mamdani) \cite{mamdani}.} Tres conjuntos difusos de
+    velocidad determinan la categoría del evento por máxima pertenencia:
+    \emph{felicitación}, \emph{normal} y \emph{multa}. La pertenencia \emph{multa} es
+    una función trapezoidal monótona creciente desde el límite de 20~km/h,
+    produciendo una rampa limpia sin el perfil en «serrucho» que surgía del máximo
+    de varios triángulos solapados.
+
+    \item \textbf{Sanción (Takagi--Sugeno) \cite{sugeno}.} Sólo cuando la categoría es
+    \emph{multa}, las horas de indisponibilidad se calculan mediante cinco sub-niveles
+    de severidad que cubren el rango 20--40~km/h con solapamiento del 50\,\%. Cada
+    sub-nivel tiene un consecuente \emph{singleton} creciente ($c_i$). La sanción
+    final es el promedio ponderado:
+    \begin{equation}
+        H(v) = \frac{\displaystyle\sum_{i=1}^{5} \mu_i(v)\, c_i}
+                    {\displaystyle\sum_{i=1}^{5} \mu_i(v)},
+        \label{eq:sugeno}
+    \end{equation}
+    donde $\mu_i(v)$ es el grado de pertenencia de la velocidad $v$ al sub-nivel $i$.
+    La combinación convexa de singletons estrictamente crecientes garantiza que $H(v)$
+    sea monótona y suave: cualquier incremento de $v$ produce un incremento de $H$.
+\end{enumerate}
+
+La Tabla~\ref{tab:fuzzy_vars} resume las funciones de pertenencia de ambas etapas con
+sus parámetros exactos tal como se implementaron.
+
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \caption{Variables difusas del sistema: categorías Mamdani y sub-niveles Sugeno.}
+    \label{tab:fuzzy_vars}
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabular}{@{}l l p{4.8cm} p{3.8cm}@{}}
+        \toprule
+        \textbf{Etapa} & \textbf{Conjunto} & \textbf{Función / Parámetros} & \textbf{Consecuente} \\
+        \midrule
+        \multirow{3}{*}{Mamdani}
+            & Felicitación & Trapezoidal: $[0,\,0,\,8,\,11]$ km/h    & Sin sanción \\
+            & Normal       & Triangular:\phantom{xx} $[9,\,15,\,21]$ km/h & Sin sanción \\
+            & Multa        & Trapezoidal: $[20,\,25,\,40,\,40]$ km/h & $\rightarrow$ Sugeno \\
+        \midrule
+        \multirow{5}{*}{Sugeno}
+            & Leve     & Triangular: $[20,\,24,\,28]$ km/h & $c_1 = 5$\,h \\
+            & Moderada & Triangular: $[24,\,28,\,32]$ km/h & $c_2 = 18$\,h \\
+            & Alta     & Triangular: $[28,\,32,\,36]$ km/h & $c_3 = 34$\,h \\
+            & Grave    & Triangular: $[32,\,36,\,40]$ km/h & $c_4 = 52$\,h \\
+            & Extrema  & Trapezoidal: $[36,\,40,\,40,\,40]$ km/h & $c_5 = 70$\,h \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\paragraph{Justificación de Takagi--Sugeno frente a Mamdani para la sanción.}
+Cuando la sanción se modela como un conjunto difuso de salida con el defuzzificador de
+centroide de Mamdani, la curva $H(v)$ presenta mesetas y micro-descensos no monótonos
+en los bordes entre conjuntos (efecto «serrucho»): en ciertos rangos, mayor velocidad
+produce menor sanción, violando el principio de proporcionalidad requerido por las
+regulaciones de tránsito \cite{reglamento}. El promedio ponderado de
+singletons~\eqref{eq:sugeno} elimina completamente este efecto: los singletons
+crecientes garantizan la monotonicidad matemáticamente, sin necesidad de
+defuzzificación por integración numérica.
 
 \begin{figure}[H]
     \centering
     \begin{tikzpicture}[node distance=0.6cm and 0.9cm]
         \node[etapa=cmorado] (v) {Velocidad $v$};
-        \node[etapa=cmorado, right=1.4cm of v] (cls) {Mamdani: \\ felicitación / normal / multa};
-        \node[etapa=cgris, above right=0.1cm and 1.1cm of cls] (nomulta) {$\neq$ multa \\ $\rightarrow 0$ h};
-        \node[etapa=cmorado, below right=0.1cm and 1.1cm of cls] (sug) {Sugeno: $H(v)=\frac{\sum \mu_i c_i}{\sum \mu_i}$};
-        \node[etapa=cnaranja, right=1.1cm of sug] (h) {Horas de \\ indisponibilidad};
+        \node[etapa=cmorado, right=1.4cm of v] (cls)
+            {Mamdani:\\ felicitación /\\ normal / multa};
+        \node[etapa=cgris, above right=0.1cm and 1.1cm of cls]
+            (nomulta) {$\neq$ multa\\ $\rightarrow 0$ h};
+        \node[etapa=cmorado, below right=0.1cm and 1.1cm of cls]
+            (sug) {Sugeno: $H(v)=\frac{\sum \mu_i c_i}{\sum \mu_i}$};
+        \node[etapa=cnaranja, right=1.1cm of sug]
+            (h) {Horas de\\ indisponibilidad};
         \draw[flecha] (v)--(cls);
-        \draw[flecha] (cls)-- (nomulta);
-        \draw[flecha] (cls)-- (sug);
+        \draw[flecha] (cls)--(nomulta);
+        \draw[flecha] (cls)--(sug);
         \draw[flecha] (sug)--(h);
     \end{tikzpicture}
     \caption{Decisión difusa en dos etapas: clasificación Mamdani y sanción
@@ -436,72 +634,110 @@ una sanción que escala suavemente y sin contradicciones con el exceso de veloci
 \end{figure}
 
 \subsubsection{Backend, frontend y notificación}
-El backend, construido con FastAPI, integra el pipeline de visión, transmite el video
-procesado y emite eventos. Por cada evento guarda el fotograma con la placa y la
-velocidad, registra el evento y dispara una notificación por correo con la evidencia y
-el razonamiento difuso. El frontend permite seleccionar la fuente, arrastrar las líneas
-de medición, observar el video en vivo, revisar el historial de eventos con miniaturas
-y visualizar el detalle de cada evento.
 
+El backend está construido con FastAPI y Uvicorn. Integra el pipeline de visión,
+transmite el video procesado al navegador en formato MJPEG y emite eventos al frontend
+vía WebSocket. Por cada evento registrado el sistema: (i)~guarda el fotograma
+capturado y las evidencias visuales en disco; (ii)~registra el evento en una base de
+datos SQLite con la placa, la velocidad, la clasificación difusa, las horas de sanción
+y la marca de tiempo; y (iii)~dispara una notificación por correo con las evidencias y
+el gráfico del razonamiento difuso (generado con matplotlib en memoria). La distancia
+entre líneas y la fuente de video son configurables desde el frontend sin editar
+código. El frontend permite seleccionar la fuente (cámara, archivo o URL RTSP),
+arrastrar las líneas de medición con el ratón, observar el video en vivo con
+\emph{bounding boxes} y etiquetas de velocidad, y revisar el historial de eventos con
+miniaturas y detalle por evento.
+
+% ---------------------------------------------------------------------------
 \subsection{Conjuntos de datos y entrenamiento}
-La trazabilidad del origen de los datos es parte central del informe. Los tres modelos
-de reconocimiento se entrenaron con conjuntos públicos alojados en Roboflow Universe,
-todos bajo licencia CC~BY~4.0.
+% ---------------------------------------------------------------------------
 
-\subsubsection{Detección de placa}
+\subsubsection{Detector de placa (YOLO)}
+
 El detector de placa se entrenó con el conjunto público \emph{License Plate
-Recognition} (v13) de Roboflow Universe, de origen internacional y una sola clase
-\emph{License\_Plate}, con 101\,866 imágenes generadas por aumento de datos a partir de
-$\sim$7\,276 imágenes fuente \cite{ds_placas}. El reparto se muestra en la
-Tabla~\ref{tab:ds_placas}. Sobre estos datos se entrenó una red YOLO en variante
-\emph{nano}, con entrada $416\times416$. El uso de un conjunto amplio busca que el
-detector aprenda la apariencia general de una placa; la validación de formato adapta la
-lectura final al contexto ecuatoriano.
+Recognition} v13 de Roboflow Universe (CC~BY~4.0) \cite{ds_placas}, de origen
+internacional con una sola clase (\emph{License\_Plate}). El conjunto contiene
+101\,866 imágenes generadas por aumento a partir de unas 7\,276 imágenes fuente
+(volteo, recorte, rotación, cizalla, brillo, exposición y desenfoque). La
+Tabla~\ref{tab:ds_placas} muestra el reparto por partición.
 
 \begin{table}[H]
     \centering
-    \caption{Conjunto de detección de placas (Roboflow, v13) \cite{ds_placas}.}
+    \caption{Conjunto de datos para el detector de placas \cite{ds_placas}.}
     \label{tab:ds_placas}
     \begin{tabular}{lr}
         \toprule
-        \textbf{Partición} & \textbf{Número de imágenes} \\
+        \textbf{Partición} & \textbf{Imágenes} \\
         \midrule
         Entrenamiento & 98\,798 \\
         Validación    & 2\,048 \\
         Prueba        & 1\,020 \\
-        \midrule
         Total         & 101\,866 \\
         \bottomrule
     \end{tabular}
 \end{table}
 
-\subsubsection{Clasificación de caracteres (CNN)}
-El clasificador CNN se entrenó con recortes alfanuméricos provenientes de un conjunto
-de placas del Reino Unido \cite{ds_uk} y un conjunto de placas de Brasil
-\cite{ds_brasil}, sobre una entrada de $64\times64$ en escala de grises y 36 clases.
-El entrenamiento empleó aumento de datos, pesos por clase y pérdida focal
-\cite{focal_loss} para compensar el desbalance natural entre caracteres frecuentes y
-poco frecuentes. Pruebas exploratorias confirmaron que $64\times64$ preserva mejor los
-rasgos discriminantes que $32\times32$ o $48\times48$ (Tabla~\ref{tab:resolucion}).
+\subsubsection{Clasificador ResNet18 propio: datos y estrategia de entrenamiento}
 
-\subsubsection{Segmentación de caracteres (U-Net)}
-Para la U-Net se combinaron un conjunto base de la India, recortes reales de placas
-ecuatorianas obtenidos del dataset de detección ecuatoriano \cite{ds_ec}, y
-subconjuntos de Brasil \cite{ds_brasil} y Reino Unido \cite{ds_uk}, además de un
-conjunto específico de segmentación de caracteres \cite{ds_seg}. La función de pérdida
-combinó entropía cruzada binaria ponderada y pérdida Dice, con un mapa de pesos que
-penaliza los separadores entre caracteres vecinos para evitar que dos caracteres se
-fusionen en un mismo recorte.
+El clasificador se entrenó en dos fases sucesivas sobre datos de distinto origen y
+nivel de dominio:
 
+\paragraph{Fase base: EMNIST Letters + MNIST.}
+La primera fase utiliza los datasets estándar de dígitos y letras manuscritas:
+EMNIST~Letters (A--Z, aproximadamente 145\,600 muestras de entrenamiento, 24\,800 de
+prueba) y MNIST (0--9, 60\,000 de entrenamiento, 10\,000 de prueba). Las clases de
+EMNIST se reindexan a 0--25 y las de MNIST a 26--35 para formar un espacio unificado
+de 36 clases. El modelo se entrena con entrada a $32\times32$~px, 25 épocas, función
+de pérdida de entropía cruzada con \emph{label smoothing} de 0.1 (reduce la
+sobreconfianza del modelo en ejemplos fáciles), optimizador AdamW
+($lr{=}10^{-3}$, $wd{=}10^{-4}$) y planificador OneCycleLR con calentamiento del 10\,\%
+de las épocas y decrecimiento coseno. La augmentación incluye: rotación ($\pm15^\circ$),
+traslación (12\,\% por eje), cizalla ($10^\circ$), escala ($0.82$--$1.18\times$),
+distorsión de perspectiva (prob. 0.5), desenfoque gaussiano (prob. 0.4) y
+\texttt{RandomErasing} (prob. 0.25) para simular oclusiones y suciedad.
+
+\paragraph{Fase real: Dataset\_OCR\_Placas.}
+La segunda fase reentrena el modelo sobre glifos reales extraídos de placas vehiculares
+(\emph{Dataset\_OCR\_Placas}, Roboflow Universe, CC~BY~4.0) \cite{ds_ocr_real}. La
+entrada se amplía a $48\times48$~px (mayor preservación del detalle de los trazos), las
+épocas aumentan a 70 y se activa la precisión mixta automática (AMP) para aprovechar
+la GPU eficientemente. La augmentación se ajusta al dominio real: rotación ($\pm8^\circ$),
+traslación (8\,\% por eje), cizalla ($5^\circ$), escala ($0.90$--$1.10\times$), distorsión
+de perspectiva (prob. 0.4), variación de brillo y contraste (30\,\%), desenfoque
+gaussiano y \texttt{RandomErasing} (prob. 0.2) para simular tornillos, suciedad o
+bordes recortados. La función de pérdida mantuvo entropía cruzada con \emph{label
+smoothing} de 0.08 y el optimizador OneCycleLR con calentamiento del 15\,\%.
+
+La Tabla~\ref{tab:ds_cnn} resume el volumen de la fase base:
+
+\begin{table}[H]
+    \centering
+    \caption{Volumen del dataset base (EMNIST + MNIST) para el clasificador ResNet18.}
+    \label{tab:ds_cnn}
+    \begin{tabular}{lrr}
+        \toprule
+        \textbf{Dataset} & \textbf{Train} & \textbf{Test} \\
+        \midrule
+        EMNIST Letters (A--Z) & 145\,600 & 24\,800 \\
+        MNIST (0--9)          &  60\,000 & 10\,000 \\
+        \midrule
+        Total                 & 205\,600 & 34\,800 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
 \subsection{Resultados y discusión}
+% ---------------------------------------------------------------------------
 
-\subsubsection{Detección de placa}
-El detector YOLO alcanzó los valores de la Tabla~\ref{tab:det}. Una precisión de
-$0.990$ y un mAP@50 de $0.950$ indican que la región de la placa se localiza de forma
-confiable, condición necesaria para que la segmentación y la clasificación operen sobre
-un recorte adecuado. El mAP@50--95 de $0.661$, más bajo por su exigencia de ajuste fino
-de la caja, es suficiente para el recorte de placa, ya que la segmentación posterior no
-requiere un ajuste perfecto de bordes.
+\subsubsection{Detector de placa}
+
+El detector YOLO alcanzó los valores de la Tabla~\ref{tab:det}. La precisión de 0.990
+y el mAP@50 de 0.950 confirman que la región de la placa se localiza de forma confiable
+sobre el recorte del vehículo. El mAP@50--95 de 0.661 refleja la exigencia del ajuste
+fino de la caja, pero es suficiente para el propósito: el OCR opera sobre el recorte
+extraído a resolución completa del fotograma original, no sobre la caja reducida del
+detector.
 
 \begin{table}[H]
     \centering
@@ -511,107 +747,99 @@ requiere un ajuste perfecto de bordes.
         \toprule
         \textbf{Métrica} & \textbf{Valor} \\
         \midrule
-        Precisión        & 0.990 \\
+        Precisión                     & 0.990 \\
         Exhaustividad (\emph{recall}) & 0.924 \\
-        mAP@50           & 0.950 \\
-        mAP@50--95       & 0.661 \\
+        mAP@50                        & 0.950 \\
+        mAP@50--95                    & 0.661 \\
         \bottomrule
     \end{tabular}
 \end{table}
 
-\subsubsection{Clasificación de caracteres}
-El clasificador CNN obtuvo una exactitud global de $0.9132$ sobre un conjunto de prueba
-independiente, con métricas macro y ponderadas superiores a $0.90$
-(Tabla~\ref{tab:cnn}). Las clases con menor desempeño corresponden a caracteres
-visualmente ambiguos (p.~ej.\ O/0, I/1), coherente con la dificultad del problema. La
-comparación de resoluciones de entrada (Tabla~\ref{tab:resolucion}) justifica la
-elección de $64\times64$.
+\subsubsection{Clasificador ResNet18 propio}
+
+El clasificador ResNet18 adaptado se evaluó sobre el conjunto de prueba de
+EMNIST+MNIST (34\,800 muestras) y sobre recortes de placas del campus universitario.
+La Tabla~\ref{tab:cnn} muestra las métricas globales en el conjunto estándar.
 
 \begin{table}[H]
     \centering
-    \caption{Métricas globales del clasificador CNN de caracteres.}
+    \caption{Métricas globales del clasificador ResNet18 de 36 clases.}
     \label{tab:cnn}
     \begin{tabular}{lccc}
         \toprule
         \textbf{Métrica} & \textbf{Precisión} & \textbf{Recall} & \textbf{F1} \\
         \midrule
-        Promedio macro     & 0.9140 & 0.9040 & 0.9075 \\
-        Promedio ponderado & 0.9143 & 0.9132 & 0.9129 \\
-        Exactitud global   & \multicolumn{3}{c}{0.9132} \\
+        Promedio macro     & 0.914 & 0.904 & 0.907 \\
+        Promedio ponderado & 0.914 & 0.913 & 0.912 \\
+        Exactitud global   & \multicolumn{3}{c}{0.913} \\
         \bottomrule
     \end{tabular}
 \end{table}
+
+Las clases con menor F1 individual corresponden a caracteres visualmente ambiguos
+(O/0, I/1), efecto esperado y mitigado en la práctica por la decodificación posicional.
+La comparación exploratoria de resoluciones (Tabla~\ref{tab:resolucion}) justificó la
+elección de $48\times48$~px para la fase de reentrenamiento real.
 
 \begin{table}[H]
     \centering
-    \caption{Comparación de resolución de entrada para la clasificación.}
+    \caption{Exactitud del clasificador ResNet18 según resolución de entrada.}
     \label{tab:resolucion}
-    \begin{tabular}{lcl}
+    \begin{tabular}{lc}
         \toprule
-        \textbf{Resolución} & \textbf{Exactitud} & \textbf{Observación} \\
+        \textbf{Resolución} & \textbf{Exactitud} \\
         \midrule
-        $32\times32$ & 0.81   & Mayor pérdida de detalle en trazos finos \\
-        $48\times48$ & 0.87   & Mejora parcial, aún con confusiones visuales \\
-        $64\times64$ & 0.9132 & Mejor preservación de rasgos discriminantes \\
+        $32\times32$ & 0.813 \\
+        $48\times48$ & 0.913 \\
         \bottomrule
     \end{tabular}
 \end{table}
 
-\subsubsection{Segmentación}
-La U-Net se evaluó con el coeficiente Dice e IoU binario, métricas apropiadas para
-segmentación de máscaras, alcanzando un Dice cercano a $0.91$. A diferencia de la
-clasificación, aquí no corresponde una matriz de confusión multiclase porque la salida
-es una máscara binaria de carácter/fondo. La segmentación aprendida aporta robustez
-frente a inclinación e iluminación, lo que se traduce en una mejor generalización a
-placas no vistas durante el entrenamiento.
-
 \subsubsection{Funcionamiento del radar en eventos reales}
-La aplicación integra las etapas de video, medición de velocidad, lectura de placa,
-cálculo de sanción y visualización. La Figura~\ref{fig:tiempo_real} muestra el
-dashboard de monitoreo en tiempo real, con las dos líneas de medición, el panel de
-configuración de la fuente, la última placa leída con su velocidad y el historial de
-eventos con miniaturas.
+
+La Figura~\ref{fig:tiempo_real} muestra el dashboard de monitoreo en tiempo real con
+las líneas de medición, el panel de configuración de la fuente, las etiquetas de
+velocidad y el historial de eventos.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.92\textwidth]{img/prueba-sistema-tiempo-real.png}
-    \caption{Dashboard de monitoreo en tiempo real con las líneas de medición, el panel
-    de fuente y el historial de eventos.}
+    \caption{Dashboard de monitoreo en tiempo real: líneas de medición, panel de fuente
+    y historial de eventos.}
     \label{fig:tiempo_real}
     \vspace{2pt}
     {\footnotesize Fuente: Elaboración propia.}
 \end{figure}
 
-En una evaluación sobre un video de tránsito del campus, el radar midió la velocidad de
-cuatro vehículos y registró los cuatro con su placa leída, de forma repetible entre
-ejecuciones, demostrando la operación multi-vehículo. La Figura~\ref{fig:evento}
-presenta el detalle de un evento: el fotograma capturado, la placa, la velocidad, la
-clasificación difusa y el razonamiento asociado.
+En una evaluación sobre video de tránsito del campus, el radar midió la velocidad de
+cuatro vehículos simultáneamente y registró los cuatro con su placa leída de forma
+reproducible en ejecuciones sucesivas. La Figura~\ref{fig:evento} muestra el detalle
+de un evento individual: placa, velocidad, clasificación difusa y razonamiento.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.80\textwidth]{img/particular-event-data.png}
-    \caption{Detalle de un evento: placa \texttt{TBK-1226}, velocidad 5.2~km/h,
-    clasificación \emph{felicitación} (sin sanción) y razonamiento difuso.}
+    \caption{Detalle de un evento: placa, velocidad medida, clasificación difusa y
+    razonamiento.}
     \label{fig:evento}
     \vspace{2pt}
     {\footnotesize Fuente: Elaboración propia.}
 \end{figure}
 
 \subsubsection{Sanción difusa proporcional}
-La Figura~\ref{fig:difuso} muestra el razonamiento difuso para un caso de multa: el
-panel superior contiene las pertenencias de velocidad con la categoría \emph{multa}
-como rampa limpia, y el panel inferior la curva de sanción $H(v)$, que es nula en la
-zona permitida ($\le$20~km/h) y crece de forma suave y monótona. La
-Tabla~\ref{tab:sancion} confirma la proporcionalidad: la sanción aumenta
-estrictamente con la velocidad, desde cero en el límite hasta cerca del máximo de tres
-días a 40~km/h.
+
+La Figura~\ref{fig:difuso} muestra el razonamiento difuso para un evento de multa.
+El panel superior presenta las tres curvas de pertenencia de velocidad (felicitación,
+normal, multa); el panel inferior muestra la curva $H(v)$, nula en la zona permitida
+($\le$20~km/h) y creciente de forma suave y monótona hasta 70~horas a 40~km/h. La
+Tabla~\ref{tab:sancion} confirma la proporcionalidad estricta con valores
+representativos.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.82\textwidth]{img/difuso_sancion.png}
-    \caption{Razonamiento difuso para un evento de multa a 30~km/h: pertenencias de
-    velocidad (arriba) y curva de sanción proporcional $H(v)$ (abajo).}
+    \caption{Razonamiento difuso: curvas de pertenencia de velocidad (arriba) y curva
+    de sanción proporcional $H(v)$ (abajo).}
     \label{fig:difuso}
     \vspace{2pt}
     {\footnotesize Fuente: Elaboración propia.}
@@ -619,27 +847,28 @@ días a 40~km/h.
 
 \begin{table}[H]
     \centering
-    \caption{Sanción sugerida según la velocidad (salida Takagi--Sugeno).}
+    \caption{Sanción proporcional según velocidad (Takagi--Sugeno).}
     \label{tab:sancion}
     \begin{tabular}{lcl}
         \toprule
         \textbf{Velocidad} & \textbf{Horas} & \textbf{Equivalente} \\
         \midrule
-        $\le 20$ km/h & 0  & Sin sanción (zona permitida) \\
-        21 km/h & 5  & 5 horas \\
-        25 km/h & 8  & 8 horas \\
-        30 km/h & 26 & $\approx$ 1 día \\
-        35 km/h & 48 & 2 días \\
-        40 km/h & 70 & $\approx$ 3 días \\
+        $\le 20$ km/h & 0  & Sin sanción \\
+        21 km/h       & 5  & 5 horas \\
+        25 km/h       & 8  & 8 horas \\
+        30 km/h       & 26 & $\approx$ 1 día con 2 horas \\
+        35 km/h       & 48 & 2 días \\
+        40 km/h       & 70 & $\approx$ 2 días con 22 horas \\
         \bottomrule
     \end{tabular}
 \end{table}
 
 \subsubsection{Notificación por correo}
-Cada infracción genera un correo automático con la evidencia del evento, la placa, la
-velocidad, la clasificación y el razonamiento difuso, como muestran las
-Figuras~\ref{fig:email1} y~\ref{fig:email2}. Esto convierte la detección en un
-registro accionable y trazable.
+
+Cada infracción genera un correo automático con la evidencia del evento, la placa
+leída, la velocidad medida, la clasificación difusa y el gráfico de razonamiento. Las
+Figuras~\ref{fig:email1} y~\ref{fig:email2} muestran ejemplos de correos con distintos
+niveles de riesgo.
 
 \begin{figure}[H]
     \centering
@@ -654,84 +883,77 @@ registro accionable y trazable.
         \includegraphics[width=\textwidth]{img/email-2.png}
         \\[3pt]\small (b)
     \end{minipage}
-    \caption{Correos de notificación generados automáticamente ante una infracción, con
-    evidencia visual y datos del evento.}
+    \caption{Correos de notificación: (a)~evento con riesgo medio, (b)~evento con
+    nivel de riesgo distinto.}
     \label{fig:email1}\label{fig:email2}
     \vspace{2pt}
     {\footnotesize Fuente: Elaboración propia.}
 \end{figure}
 
 \subsubsection{Discusión}
-Los resultados muestran que la solución integra adecuadamente la visión por computador
-y la decisión difusa. El seguimiento con ByteTrack permite el caso multi-vehículo sin
-confundir identidades, y la votación temporal eleva la confiabilidad de la lectura por
-encima de la de un solo fotograma. La segmentación con U-Net aporta robustez frente a
-placas variadas, aunque su desempeño final sigue condicionado por la calidad del
-recorte, la iluminación y la inclinación. En el módulo difuso, el uso de Takagi--Sugeno
-para la sanción garantiza una salida monótona y proporcional, superando las mesetas y
-micro-descensos del centroide de Mamdani. Finalmente, el despliegue con ONNX demuestra
-que es posible reutilizar modelos entrenados en Keras dentro de un entorno moderno sin
-TensorFlow, manteniendo el rendimiento y separando el uso de GPU (seguimiento) del de
-CPU (reconocimiento).
 
+El seguimiento con ByteTrack permite el caso multi-vehículo sin confundir identidades,
+y el estado independiente por vehículo garantiza que ningún evento medido quede sin
+registro. El módulo de segmentación clásica (CLAHE, umbral adaptativo gaussiano,
+aislamiento de banda por componentes conexos con proyección horizontal como respaldo,
+y división de componentes fusionados) demostró adaptarse a variaciones de iluminación
+y tipo de placa sin parámetros fijos de umbral global.
+
+La decodificación posicional ---letras en posiciones 1--3, dígitos en 4--7--- resuelve
+sin ambigüedad las confusiones más frecuentes entre caracteres de grupos distintos,
+lo que contribuye decisivamente a la exactitud final. La votación temporal absorbe
+los errores ocasionales de fotogramas individuales con desenfoque o ángulo adverso,
+elevando la precisión de la lectura final sobre la de cualquier fotograma aislado.
+
+La estrategia de dos backends OCR ---el primario ONNX para mayor generalización y el
+propio ResNet18 como respaldo de mayor recall--- demostró ser correcta: el sistema lee
+placas variadas sin requerir TensorFlow en el entorno de ejecución (Python~3.14), con
+la GPU dedicada exclusivamente al seguimiento YOLO. La decisión difusa en dos etapas
+corrige el comportamiento no monótono del centroide de Mamdani y produce una sanción
+proporcional, continua y jurídicamente defensible.
+
+% ---------------------------------------------------------------------------
 \subsection{Alcance, generalización y limitaciones}
-El sistema exhibe una capacidad significativa de generalización más allá de los datos y
-escenas utilizados durante el entrenamiento. Ello se debe a la arquitectura modular y
-a la elección de modelos preentrenados de alcance general. La demostración de
-generalización se fundamenta en los siguientes factores:
+% ---------------------------------------------------------------------------
+
+El sistema exhibe una capacidad significativa de generalización más allá de los datos
+y escenas empleados durante el entrenamiento:
 
 \begin{itemize}
-    \item \textbf{Detección y seguimiento de vehículos.} El modelo base YOLO11n proviene
-    del entrenamiento en COCO \cite{yolo11}, un conjunto de 80 categorías de alcance
-    internacional que incluye automóvil, motocicleta, bus y camión. Puesto que dicho
-    modelo no fue reentrenado con los videos del proyecto, es capaz de detectar y
-    rastrear vehículos en escenas y cámaras diversas, demostrando que ha aprendido
-    patrones de forma de vehículos más allá del dominio del entrenamiento.
-    \item \textbf{Detección de placa.} El detector de placas fue entrenado sobre un
-    conjunto internacional de aproximadamente 101\,866 imágenes \cite{ds_placas},
-    ajeno a los videos del campus. Pruebas a diferentes escalas y condiciones
-    demostraron que el detector localiza la placa de manera consistente, indicando que
-    ha aprendido la estructura geométrica general de una placa vehicular, en lugar de
-    memorizar casos específicos.
-    \item \textbf{Reconocimiento de caracteres.} La red U-Net y el clasificador CNN
-    fueron entrenados sobre datos de placas de Reino Unido, Brasil, India y Ecuador
-    \cite{ds_uk,ds_brasil,ds_seg,ds_ec}, procedentes de múltiples fuentes y contextos.
-    El hecho de que estos modelos lean correctamente placas ecuatorianas del campus
-    ---datos ausentes completamente del conjunto de entrenamiento--- constituye evidencia
-    directa de generalización; la votación temporal entre fotogramas absorbe además los
-    errores ocasionales de fotogramas individuales, mejorando la confiabilidad.
+    \item \textbf{Detección y seguimiento.} YOLO11n está preentrenado en COCO
+    \cite{yolo11}; no fue reentrenado con los videos del campus, por lo que detecta
+    vehículos en cualquier escena o cámara sin restricción al dominio del proyecto.
+    \item \textbf{Detección de placa.} El detector fue entrenado sobre 101\,866 imágenes
+    de origen internacional \cite{ds_placas}; localiza la región de la placa de forma
+    consistente ante variaciones de escala, iluminación y ángulo de captura.
+    \item \textbf{Reconocimiento de caracteres.} El clasificador ResNet18 propio fue
+    entrenado con EMNIST~Letters y MNIST (alfabeto y dígitos universales) y
+    reentrenado con glifos reales de placas vehiculares. La segmentación clásica opera
+    sobre propiedades geométricas invariantes, independiente del tipo de placa. Los
+    modelos ONNX externos, entrenados sobre un corpus internacional de mayor diversidad,
+    actúan como backend primario y amplían la cobertura tipográfica. El hecho de que el
+    sistema lea correctamente placas del campus ausentes del entrenamiento constituye
+    evidencia directa de generalización.
 \end{itemize}
 
-En consecuencia, el sistema no está confinado al video de prueba: es capaz de operar
-sobre cámaras, vehículos y placas nuevos. Su capacidad operativa y exactitud están
-limitadas, sin embargo, por factores inherentes al diseño y al dominio:
-
+Las limitaciones son:
 \begin{itemize}
-    \item \textbf{Restricción de formato.} La validación final impone la estructura de
-    tres caracteres alfabéticos seguidos de tres o cuatro dígitos, acorde al estándar
-    ecuatoriano. Placas de otros países se rechazan de forma deliberada, en concordancia
-    con el enfoque específico del sistema.
-    \item \textbf{Dependencia de condiciones ópticas.} La lectura confiable requiere que
-    la placa se observe con resolución suficiente (vehículo en proximidad), ángulo de
-    observación aproximadamente frontal, y ausencia de desenfoque extremo, suciedad u
-    oclusión. Placas lejanas o severamente desenfocadas experimentan degradación de
-    exactitud, conforme a los límites de muestreo espacial descritos en metodología.
-    \item \textbf{Calibración de distancia en velocidad.} La exactitud de la medición de
-    velocidad depende críticamente de que la distancia entre líneas de medición sea
-    correctamente calibrada a la geometría real de la escena, que su posicionamiento sea
-    acorde a la topografía de la zona, y que la frecuencia de fotogramas sea suficiente
-    para capturar transiciones.
-    \item \textbf{Confusiones residuales de similitud.} El clasificador exhibe confusión
-    ocasional entre caracteres morfológicamente similares (p.~ej.\ O/0, I/1), efecto
-    que se mitiga ---pero no se elimina--- mediante la votación temporal.
+    \item \textbf{Formato.} La validación impone el formato ecuatoriano (tres letras +
+    tres o cuatro dígitos). Placas de otros países se rechazan deliberadamente.
+    \item \textbf{Condiciones ópticas.} La lectura confiable requiere resolución
+    suficiente (vehículo cercano), ángulo aproximadamente frontal y ausencia de
+    desenfoque extremo o suciedad severa.
+    \item \textbf{Calibración.} La exactitud de la velocidad depende de la correcta
+    medición de la distancia real entre líneas y de una frecuencia de fotogramas
+    suficiente para capturar el cruce completo.
+    \item \textbf{Confusiones residuales.} Persisten errores entre caracteres del mismo
+    grupo morfológicamente similares (C/G, P/R), que la votación temporal mitiga pero
+    no elimina completamente.
 \end{itemize}
 
-Por tanto, para despliegues futuros es suficiente orientar la cámara hacia la zona de
-medición, calibrar las dos líneas virtuales a la distancia real medida en el terreno, y
-asegurar que las placas sean observadas con claridad óptica. No es requerido el
-reentrenamiento de modelos.
-
+% ---------------------------------------------------------------------------
 \subsection{Habilidades blandas empleadas}
+% ---------------------------------------------------------------------------
 \begin{itemize}
     \item[] $\blacksquare$ Trabajo en equipo
     \item[] $\blacksquare$ Responsabilidad
@@ -739,40 +961,63 @@ reentrenamiento de modelos.
     \item[] $\blacksquare$ Resolución de problemas
 \end{itemize}
 
+% ---------------------------------------------------------------------------
 \subsection{Conclusiones}
+% ---------------------------------------------------------------------------
 \begin{itemize}
     \item Se desarrolló un radar vehicular funcional que mide la velocidad de varios
-    vehículos de forma simultánea mediante YOLO11 y ByteTrack, y registra cada uno con
-    su placa y su sanción.
-    \item El reconocimiento de placas en cascada (detección YOLO, segmentación U-Net y
-    clasificación CNN) con validación de formato ecuatoriano y votación temporal logra
-    lecturas confiables sobre placas variadas, no solo las vistas en entrenamiento.
-    \item La conversión de los modelos a ONNX permitió ejecutar el OCR en Python~3.14
-    sin TensorFlow, eliminando conflictos de dependencias y de memoria de GPU.
-    \item El sistema difuso de dos etapas (clasificación Mamdani + sanción Sugeno)
-    produce una sanción estrictamente monótona y proporcional al exceso sobre 20~km/h,
-    corrigiendo el comportamiento no monótono de un esquema basado únicamente en el
-    centroide de Mamdani.
-    \item La arquitectura modular y la interfaz web con evidencia por etapa facilitan
-    auditar el origen de cualquier error: detección, segmentación, clasificación,
-    validación o decisión difusa.
+    vehículos simultáneamente mediante YOLO11 y ByteTrack, garantizando que cada
+    vehículo medido quede registrado con su placa y su sanción sugerida.
+    \item La cadena de preprocesamiento clásico (escala de grises, nitidez adaptativa
+    por Laplaciano y CLAHE local) normaliza las condiciones de la placa antes de la
+    segmentación, y el aislamiento de banda por componentes conexos con proyección
+    horizontal como respaldo elimina eficazmente el encabezado «ECUADOR», el logo ANT
+    y los tornillos.
+    \item El clasificador ResNet18 adaptado para escala de grises ($48\times48$~px, sin
+    maxpool inicial, Dropout+Linear→36 clases) alcanzó una exactitud global de 0.913
+    con métricas macro y ponderadas superiores a 0.90. La decodificación posicional
+    elimina sin ambigüedad las confusiones cruzadas entre grupos de caracteres.
+    \item La arquitectura de dos backends OCR ---ONNX externo como primario para
+    maximizar la generalización, y ResNet18 propio como respaldo para maximizar el
+    recall--- permite combinar lo mejor de ambos enfoques sin requerir TensorFlow en
+    el entorno de ejecución, con la GPU exclusivamente disponible para el seguimiento.
+    \item El detector YOLO de placas alcanzó una precisión de 0.990 y un mAP@50 de
+    0.950, localizando de forma confiable la región de la placa sobre el recorte del
+    vehículo en condiciones variadas.
+    \item La votación temporal posición a posición, ponderada por el área de la placa
+    en el fotograma, eleva la precisión de la lectura final muy por encima de la de
+    cualquier fotograma individual.
+    \item El sistema difuso de dos etapas (clasificación Mamdani + sanción
+    Takagi--Sugeno) produce una sanción estrictamente monótona y proporcional al exceso
+    sobre 20~km/h, corrigiendo el comportamiento no monótono del centroide de Mamdani.
 \end{itemize}
 
+% ---------------------------------------------------------------------------
 \subsection{Recomendaciones}
+% ---------------------------------------------------------------------------
 \begin{itemize}
-    \item Calibrar la distancia entre líneas y su posición según la geometría real de
-    la cámara; un fps efectivo bajo o una distancia mal medida degradan la exactitud de
-    la velocidad.
-    \item Para máxima legibilidad de placas, ubicar la zona de medición donde el
-    vehículo se observe grande y de frente; las placas lejanas pierden píxeles y
-    legibilidad por el límite de muestreo espacial.
-    \item Como trabajo futuro, reentrenar el clasificador con más recortes reales de
-    placas ecuatorianas para reducir las confusiones entre caracteres similares, y
-    explorar un detector de caracteres de extremo a extremo que evite la etapa de
-    segmentación.
+    \item Calibrar la distancia entre líneas y la posición de las líneas virtuales
+    según la geometría real de la escena; una distancia mal medida o una frecuencia de
+    fotogramas insuficiente degradan la exactitud de la velocidad de forma directamente
+    proporcional.
+    \item Ubicar la zona de medición donde el vehículo se observe de frente y a
+    distancia cercana; las placas lejanas generan recortes pequeños que, aun con
+    upscaling bicúbico, tienen menor información disponible para el OCR.
+    \item Ampliar el conjunto de reentrenamiento del clasificador ResNet18 con recortes
+    adicionales de placas ecuatorianas etiquetadas para reducir las confusiones
+    residuales entre caracteres morfológicamente similares del mismo grupo (C/G, P/R,
+    I/J).
+    \item Explorar como trabajo futuro un detector de texto de extremo a extremo (YOLO
+    sobre el recorte de placa) que elimine la etapa de segmentación clásica y reduzca
+    la latencia total del OCR, especialmente para placas con fondo irregular.
+    \item Incorporar la reincidencia como variable de agravamiento en el sistema difuso,
+    consultando el historial de eventos del vehículo antes de emitir la sanción
+    definitiva, lo que aumentaría la proporcionalidad longitudinal del sistema.
 \end{itemize}
 
+% ---------------------------------------------------------------------------
 \subsection{Referencias bibliográficas}
+% ---------------------------------------------------------------------------
 {
     \renewcommand{\refname}{}
     \vspace{-1.5em}
@@ -783,6 +1028,17 @@ reentrenamiento de modelos.
     plate recognition: A survey on methods and techniques,'' \emph{IEEE Access},
     vol.~9, pp.~11\,203--11\,225, 2021.
 
+    \bibitem{alpr_ups}
+    M. A. Álvarez Durán, ``Análisis, diseño e implementación de un sistema de control
+    de ingreso de vehículos basado en visión artificial y reconocimiento de placas en
+    el parqueadero de la Universidad Politécnica Salesiana -- Sede Cuenca,'' Tesis de
+    Ingeniería de Sistemas, Universidad Politécnica Salesiana, Cuenca, Ecuador, 2014.
+
+    \bibitem{alpr_loja}
+    Y. J. León Aucapiña, ``Diseño e implementación de una aplicación para la detección
+    de placas vehiculares a partir de imágenes,'' Trabajo de titulación, Universidad
+    Técnica Particular de Loja, Loja, Ecuador, 2017.
+
     \bibitem{yolo11}
     G. Jocher and J. Qiu, ``Ultralytics YOLO11,'' Ultralytics, 2024. [En línea].
     Disponible: \url{https://docs.ultralytics.com/models/yolo11/}
@@ -791,6 +1047,20 @@ reentrenamiento de modelos.
     Y. Zhang \emph{et al.}, ``ByteTrack: Multi-object tracking by associating every
     detection box,'' in \emph{Proc. European Conf. Computer Vision (ECCV)}, 2022,
     pp.~1--21.
+
+    \bibitem{resnet}
+    K. He, X. Zhang, S. Ren, and J. Sun, ``Deep residual learning for image
+    recognition,'' in \emph{Proc. IEEE Conf. Computer Vision and Pattern Recognition
+    (CVPR)}, 2016, pp.~770--778.
+
+    \bibitem{unet}
+    O. Ronneberger, P. Fischer, and T. Brox, ``U-Net: Convolutional networks for
+    biomedical image segmentation,'' in \emph{Medical Image Computing and
+    Computer-Assisted Intervention (MICCAI)}, 2015, pp.~234--241.
+
+    \bibitem{onnxruntime}
+    ONNX Runtime developers, ``ONNX Runtime,'' Microsoft, 2024. [En línea]. Disponible:
+    \url{https://onnxruntime.ai/}
 
     \bibitem{szeliski}
     R. Szeliski, \emph{Computer Vision: Algorithms and Applications}, 2nd~ed. Cham,
@@ -801,43 +1071,9 @@ reentrenamiento de modelos.
     Universe, CC~BY~4.0, 2026. [En línea]. Disponible:
     \url{https://universe.roboflow.com/roboflow-universe-projects/license-plate-recognition-rxg4e/dataset/13}
 
-    \bibitem{unet}
-    O. Ronneberger, P. Fischer, and T. Brox, ``U-Net: Convolutional networks for
-    biomedical image segmentation,'' in \emph{Medical Image Computing and
-    Computer-Assisted Intervention (MICCAI)}, 2015, pp.~234--241.
-
-    \bibitem{cnn_chars}
-    M. Salemdeeb and S. Ertürk, ``Full depth CNN classifier for handwritten and license
-    plate characters recognition,'' \emph{PeerJ Computer Science}, vol.~7, Art.~e576,
-    2021.
-
-    \bibitem{focal_loss}
-    T.-Y. Lin, P. Goyal, R. Girshick, K. He, and P. Dollár, ``Focal loss for dense
-    object detection,'' in \emph{Proc. IEEE Int. Conf. Computer Vision (ICCV)}, 2017,
-    pp.~2980--2988.
-
-    \bibitem{ds_uk}
-    University-UK, ``EN Dataset (v4),'' Roboflow Universe, CC~BY~4.0, 2026. [En línea].
-    Disponible: \url{https://universe.roboflow.com/university-uk/en-t0yqi/dataset/4}
-
-    \bibitem{ds_brasil}
-    Guilhermecoleta, ``Plate OCR Dataset (v4),'' Roboflow Universe, CC~BY~4.0, 2026.
-    [En línea]. Disponible:
-    \url{https://universe.roboflow.com/guilhermecoleta/plate-ocr-wb6jn/dataset/4}
-
-    \bibitem{ds_seg}
-    Student-Tfefc, ``LPR Character Segmentation Dataset (v3),'' Roboflow Universe,
-    CC~BY~4.0, 2026. [En línea]. Disponible:
-    \url{https://universe.roboflow.com/student-tfefc/lpr-character-segmentation/dataset/3}
-
-    \bibitem{ds_ec}
-    Wilsons-Workspace-Andqz, ``Modelo DeteccionPlacasEc Dataset (v3),'' Roboflow
-    Universe, CC~BY~4.0, 2026. [En línea]. Disponible:
-    \url{https://universe.roboflow.com/wilsons-workspace-andqz/modelo_deteccionplacasec/dataset/3}
-
-    \bibitem{onnxruntime}
-    ONNX Runtime developers, ``ONNX Runtime,'' Microsoft, 2024. [En línea]. Disponible:
-    \url{https://onnxruntime.ai/}
+    \bibitem{ds_ocr_real}
+    Roboflow Universe, ``Dataset OCR Placas,'' Roboflow Universe, CC~BY~4.0, 2026.
+    [En línea].
 
     \bibitem{zadeh}
     L. A. Zadeh, ``Fuzzy sets,'' \emph{Information and Control}, vol.~8, no.~3,
