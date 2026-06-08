@@ -1,20 +1,30 @@
-# Detección de placas
+# Visión por computador y detección
 ultralytics>=8.3.0
+opencv-python>=4.8
+numpy>=1.24
 
-# Visión por computador
-opencv-python
-numpy
-pillow
+# OCR: modelo U-Net segmentación + CNN clasificación (vía ONNX, sin TensorFlow)
+onnxruntime>=1.16
 
-# CNN clasificador de caracteres
-torch
-torchvision
+# GPU para YOLO (torch/cuda opcional; si no se instala, solo CPU)
+torch>=2.0
+torchvision>=0.15
 
-# Lógica difusa (sanción por velocidad)
-scikit-fuzzy
+# Lógica difusa para sanción proporcional
+scikit-fuzzy>=0.20
 
-# Backend y WebSockets
-fastapi
-uvicorn
-websockets
-python-multipart
+# Visualización: gráficas difusas (modal + correo)
+matplotlib>=3.7
+
+# Backend web: FastAPI + Uvicorn + WebSockets
+fastapi>=0.104
+uvicorn>=0.24
+websockets>=12
+python-multipart>=0.0.6
+pydantic>=2.0
+
+# Configuración desde .env (correo, etc)
+python-dotenv>=1.0
+
+# Utilidades opcionales
+pillow>=10  # para manipulación de imágenes adicionales
